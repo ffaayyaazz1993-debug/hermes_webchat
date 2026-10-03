@@ -1,0 +1,1922 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Hermes</title>
+<script id="hermes-boot" type="application/json">{}</script>
+<style>
+/* ============================== themes ============================== */
+:root {
+  --bg: #0d0d0d; --panel: #171717; --panel-2: #212121; --hover: #2a2a2a;
+  --line: #2f2f2f; --line-soft: #262626;
+  --fg: #ececec; --fg-dim: #b4b4b4; --muted: #8f8f8f;
+  --accent: #10a37f; --accent-fg: #ffffff;
+  --bubble: #212121; --user-bubble: #303030;
+  --danger: #ef4444;
+  --shadow: 0 8px 30px rgba(0,0,0,.45);
+  --sidebar-w: 268px; --radius: 12px;
+  color-scheme: dark;
+}
+html[data-theme="light"] {
+  --bg: #ffffff; --panel: #f7f7f8; --panel-2: #ffffff; --hover: #ececec;
+  --line: #e5e5e5; --line-soft: #efefef;
+  --fg: #0d0d0d; --fg-dim: #444444; --muted: #6b6b6b;
+  --accent: #10a37f; --accent-fg: #ffffff;
+  --bubble: #f7f7f8; --user-bubble: #ececec;
+  --shadow: 0 8px 30px rgba(0,0,0,.12);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  overflow: hidden;
+}
+button, textarea, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 6px; }
+html[data-theme="light"] ::-webkit-scrollbar-thumb { background: #cfcfcf; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ============================== shell ============================== */
+#app { display: flex; height: 100%; }
+
+/* ---------- sidebar ---------- */
+#sidebar {
+  width: var(--sidebar-w); flex: 0 0 var(--sidebar-w);
+  background: var(--panel); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; min-height: 0;
+  transition: margin-left .22s ease;
+}
+body.sidebar-collapsed #sidebar { margin-left: calc(-1 * var(--sidebar-w)); }
+.sb-head { padding: 10px; border-bottom: 1px solid var(--line-soft); }
+.btn-new {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  background: none; border: 1px solid var(--line); color: var(--fg);
+  border-radius: 10px; padding: 10px 12px; font-size: 14px; text-align: left;
+}
+.btn-new:hover { background: var(--hover); }
+.sb-scroll { flex: 1 1 auto; overflow-y: auto; padding: 8px 8px 16px; min-height: 0; }
+.sb-group { margin: 12px 0 4px; padding: 0 10px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--muted); font-weight: 600; }
+.sb-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; border-radius: 8px; padding: 9px 10px;
+  font-size: 13.5px; color: var(--fg-dim); text-align: left;
+}
+.sb-item:hover { background: var(--hover); color: var(--fg); }
+.sb-item.active { background: var(--hover); color: var(--fg); }
+.sb-item .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-item .x { opacity: 0; border-radius: 5px; padding: 2px 5px; color: var(--muted); font-size: 12px; }
+.sb-item:hover .x { opacity: 1; }
+.sb-item .x:hover { background: var(--panel-2); color: var(--fg); }
+.sb-empty { color: var(--muted); font-size: 13px; padding: 10px; }
+.sb-foot { border-top: 1px solid var(--line-soft); padding: 8px; display: flex; gap: 6px; align-items: center; }
+.icon-btn {
+  background: none; border: none; border-radius: 8px; padding: 7px 9px;
+  color: var(--fg-dim); display: inline-flex; align-items: center; justify-content: center;
+}
+.icon-btn:hover { background: var(--hover); color: var(--fg); }
+
+/* ---------- main ---------- */
+#main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* ---------- naming UI ---------- */
+/* Sidebar rename box: replaces the label in place. Sized to the row so the layout
+   does not jump when it appears. */
+.sb-rename {
+  flex: 1; min-width: 0; background: var(--panel-2); color: var(--fg);
+  border: 1px solid var(--accent); border-radius: 6px; padding: 3px 7px;
+  font: inherit; font-size: 13.5px; outline: none;
+}
+.sb-item .x.pen { opacity: 0; }
+.sb-item:hover .x.pen, .sb-item.active .x.pen { opacity: 1; }
+.sb-item .x.pen:hover { background: var(--panel-2); color: var(--fg); }
+/* Header title doubles as a rename affordance. */
+#convTitle { cursor: text; padding: 3px 7px; margin: -3px -7px; border-radius: 6px; }
+#convTitle:hover { background: var(--hover); }
+
+#topbar { border-bottom: 1px solid var(--line-soft); min-height: 52px; }
+/* Same 780px centred column as #thread-inner and #composer, so the title starts on
+   the same left edge as the messages instead of hugging the viewport (the topbar used
+   to span full width, which put the title ~480px left of the first bubble on a wide
+   screen). The border stays on the outer bar so it still spans the full width. */
+#topbar-inner {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; max-width: 780px; margin: 0 auto; padding: 10px 18px;
+  min-height: 52px;
+}
+#topbar .title { font-weight: 600; font-size: 15px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+#status { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+.dot.ok { background: var(--accent); } .dot.busy { background: var(--accent); animation: pulse 1s infinite; }
+.dot.err { background: var(--danger); }
+@keyframes pulse { 50% { opacity: .25; } }
+
+#thread { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+#thread-inner { max-width: 780px; margin: 0 auto; padding: 26px 18px 12px; }
+
+/* empty state */
+#welcome { text-align: center; padding: 8vh 12px 20px; }
+#welcome h2 { font-size: 26px; margin: 0 0 8px; font-weight: 600; }
+#welcome p { color: var(--muted); margin: 0 0 22px; font-size: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.chip {
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--fg-dim);
+  border-radius: 999px; padding: 8px 14px; font-size: 13px;
+}
+.chip:hover { background: var(--hover); color: var(--fg); }
+
+/* messages */
+.msg { display: flex; flex-direction: column; margin-bottom: 22px; }
+.msg.user { align-items: flex-end; }
+.msg .bubble {
+  max-width: 100%; padding: 11px 15px; border-radius: var(--radius);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.msg.user .bubble { background: var(--user-bubble); border-bottom-right-radius: 4px; }
+.msg.assistant .bubble { background: var(--bubble); border: 1px solid var(--line-soft); border-bottom-left-radius: 4px; }
+.msg.system { align-items: center; }
+.msg.system .bubble { background: none; border: 1px dashed var(--line); color: var(--muted); font-size: 13px; text-align: center; }
+.msg.error .bubble { background: #3a1c22; border: 1px solid #6d2b35; color: #ffd9d9; }
+html[data-theme="light"] .msg.error .bubble { background: #fdecec; border-color: #f3c2c2; color: #8a1c1c; }
+
+.meta { font-size: 11.5px; color: var(--muted); margin: 0 4px 4px; display: flex; gap: 8px; align-items: center; }
+.msg.user .meta { justify-content: flex-end; }
+
+.bubble pre { background: #0b0b0b; border: 1px solid var(--line); border-radius: 8px;
+  padding: 11px 13px; overflow-x: auto; margin: 8px 0; }
+html[data-theme="light"] .bubble pre { background: #f6f6f6; }
+.bubble code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+.bubble pre code { background: none; padding: 0; }
+.bubble :not(pre) > code { background: rgba(127,127,127,.18); padding: 1px 5px; border-radius: 4px; }
+
+.tools { display: flex; flex-direction: column; gap: 4px; margin: 0 0 6px; }
+.tool-line {
+  font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace;
+  background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 7px; padding: 5px 9px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tool-line.err { color: var(--danger); border-color: #6d2b35; }
+
+.caret::after { content: "\258B"; color: var(--accent); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* message controls */
+.controls { display: flex; gap: 2px; margin-top: 6px; opacity: 0; transition: opacity .12s; }
+.msg:hover .controls, .msg:focus-within .controls { opacity: 1; }
+@media (hover: none) { .controls { opacity: 1; } }
+.ctl {
+  background: none; border: none; color: var(--muted); border-radius: 6px;
+  padding: 5px 7px; font-size: 12px;
+}
+.ctl:hover { background: var(--hover); color: var(--fg); }
+.ctl:disabled { opacity: .4; cursor: not-allowed; }
+
+/* edit mode */
+.edit-area {
+  width: 100%; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 11px 13px; resize: vertical; min-height: 68px;
+  overflow-y: auto; line-height: 1.6;
+}
+.edit-area:focus { outline: none; border-color: var(--accent); }
+.edit-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.btn-sm { border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px;
+  padding: 6px 12px; font-size: 13px; }
+.btn-sm:hover { background: var(--hover); }
+.btn-sm.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+
+/* ---------- CLI-style thinking line ---------- */
+.thinking {
+  display: flex; align-items: center; gap: 8px; padding: 0 4px 7px;
+  font-size: 12px; color: var(--fg-dim); line-height: 1.2;
+}
+.thinking .face { font-size: 13px; }
+.thinking .verb { color: var(--accent); }
+.thinking .tool { color: var(--fg-dim); }
+.thinking .dots::after {
+  content: ""; animation: thinkdots 1.2s steps(4, end) infinite;
+}
+@keyframes thinkdots {
+  0%   { content: ""; }
+  25%  { content: "\2009."; }
+  50%  { content: "\2009\2009.."; }
+  75%, 100% { content: "\2009\2009\2009..."; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking .dots::after { animation: none; content: "\2009\2009\2009..."; }
+}
+
+/* ---------- activity panel (live turn structure) ---------- */
+/* #main is a ROW: chat column + activity panel side by side. */
+#main { flex: 1 1 auto; display: flex; flex-direction: row; min-width: 0; min-height: 0; }
+#maincol { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.actpanel {
+  flex: 0 0 320px; width: 320px; border-left: 1px solid var(--line-soft);
+  background: var(--panel); display: flex; flex-direction: column; min-height: 0;
+}
+.actpanel[hidden] { display: none; }
+.act-head {
+  display: flex; align-items: center; gap: 8px; padding: 11px 12px;
+  border-bottom: 1px solid var(--line-soft); min-height: 52px;
+}
+.act-title { font-weight: 600; font-size: 13px; }
+.act-count { font-size: 11.5px; color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+.act-x { padding: 4px; }
+.act-body { flex: 1 1 auto; overflow-y: auto; padding: 8px 6px 16px; min-height: 0; }
+
+.act-turn { margin-bottom: 10px; border: 1px solid var(--line-soft); border-radius: 9px; overflow: hidden; }
+.act-turn > .row { background: var(--panel-2); }
+.row {
+  display: flex; align-items: center; gap: 7px; padding: 6px 9px;
+  font-size: 12.5px; cursor: pointer; user-select: none;
+}
+.row:hover { background: var(--hover); }
+.row .tw { width: 10px; color: var(--muted); flex: 0 0 auto; font-size: 10px; }
+.row .ico { flex: 0 0 auto; opacity: .85; }
+.row .nm { flex: 0 0 auto; font-weight: 600; max-width: 46%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .pv { flex: 1 1 auto; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.row .ms { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.row .st { flex: 0 0 auto; font-size: 11px; }
+.row .st.ok { color: #4ade80; }
+.row .st.run { color: var(--accent); }
+.row .st.err { color: #f87171; }
+.row .st.think { color: var(--muted); }
+.row .sp { width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  animation: pulse 1s infinite; flex: 0 0 auto; }
+
+.act-detail {
+  padding: 7px 10px 9px 26px; font-size: 11.5px; color: var(--fg-dim);
+  border-top: 1px solid var(--line-soft); background: var(--bg);
+}
+.act-detail pre {
+  margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 11px;
+  color: var(--muted); max-height: 190px; overflow: auto;
+}
+.act-detail .lbl { color: var(--muted); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .06em; margin-bottom: 3px; }
+.act-kids { padding: 4px 0 6px 18px; border-top: 1px solid var(--line-soft); }
+.act-batch {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 999px;
+  padding: 1px 7px; margin: 3px 0 0 26px;
+}
+.act-empty { padding: 14px 10px; color: var(--muted); font-size: 12.5px; }
+.act-note {
+  margin: 8px 10px 0; font-size: 10.5px; color: var(--muted);
+  border-left: 2px solid var(--line); padding-left: 8px;
+}
+
+/* ---------- capability table ---------- */
+.capwrap { margin: 2px 0 6px; border: 1px solid var(--line-soft); border-radius: 10px; overflow: hidden; }
+.capwrap > .hd {
+  display: flex; align-items: center; gap: 8px; padding: 8px 11px;
+  background: var(--panel-2); border-bottom: 1px solid var(--line-soft);
+  font-size: 12px; font-weight: 600;
+}
+.capwrap > .hd .n { margin-left: auto; color: var(--muted); font-weight: 400; font-size: 11px; }
+.capgrp { border-bottom: 1px solid var(--line-soft); }
+.capgrp:last-child { border-bottom: none; }
+.capgrp > .gh {
+  padding: 6px 11px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--muted); background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+}
+table.cap { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.cap td { padding: 5px 11px; vertical-align: top; border-top: 1px solid var(--line-soft); }
+table.cap tr:first-child td { border-top: none; }
+table.cap td.f { color: var(--muted); white-space: nowrap; width: 1%; padding-right: 14px; }
+table.cap td.v { font-weight: 600; word-break: break-word; }
+table.cap td.n { color: var(--muted); font-weight: 400; font-size: 11.5px; word-break: break-all; }
+.capempty { padding: 5px 11px 7px; color: var(--muted); font-size: 11.5px; }
+.caperr { padding: 7px 11px; color: #f87171; font-size: 11.5px; }
+
+/* ---------- status strip (mirrors the CLI status bar) ---------- */
+.stats {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums;
+  padding: 0 4px 7px; line-height: 1; white-space: nowrap; overflow: hidden;
+}
+.stats .seg { display: inline-flex; align-items: center; gap: 4px; }
+.stats .sep { opacity: .45; }
+.stats .model { color: var(--fg-dim); }
+.stats .bar { letter-spacing: -1px; }
+.stats .good { color: #4ade80; }
+.stats .warn { color: #fbbf24; }
+.stats .bad  { color: #f87171; }
+.stats .live { color: var(--accent); }
+
+/* ---------- slash-command palette ---------- */
+.slash {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 6px);
+  max-height: 320px; overflow-y: auto; z-index: 30;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--shadow); padding: 5px;
+}
+#composer { position: relative; }
+.slash-row {
+  display: flex; align-items: baseline; gap: 9px; padding: 7px 9px;
+  border-radius: 7px; cursor: pointer; font-size: 13px;
+}
+.slash-row:hover, .slash-row.sel { background: var(--hover); }
+.slash-row .cmd { font-weight: 600; color: var(--accent); white-space: nowrap; }
+.slash-row .desc {
+  color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; min-width: 0;
+}
+.slash-empty { padding: 12px; color: var(--muted); font-size: 13px; }
+.slash-head {
+  padding: 6px 9px 4px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--muted); font-weight: 600;
+}
+
+/* ---------- composer ---------- */
+#composer-wrap { border-top: 1px solid var(--line-soft); background: var(--bg); padding: 12px 14px 16px; }
+#composer { max-width: 780px; margin: 0 auto; }
+#composer-box {
+  display: flex; align-items: flex-end; gap: 8px; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 18px; padding: 8px 8px 8px 14px;
+}
+#composer-box:focus-within { border-color: #4a4a4a; }
+html[data-theme="light"] #composer-box:focus-within { border-color: #b9b9b9; }
+#input {
+  flex: 1; background: none; border: none; resize: none; outline: none;
+  max-height: 42vh; min-height: 26px; padding: 6px 0; line-height: 1.55;
+  overflow-y: auto;
+}
+#send {
+  flex: 0 0 auto; width: 36px; height: 36px; border-radius: 50%; border: none;
+  background: var(--accent); color: var(--accent-fg);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+#send:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
+#send.stop { background: var(--fg); color: var(--bg); }
+#hint { max-width: 780px; margin: 8px auto 0; font-size: 11.5px; color: var(--muted); text-align: center; }
+
+/* ---------- toast / scrim ---------- */
+#toast {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 104px; z-index: 40;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--fg);
+  padding: 9px 15px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow);
+  display: none; max-width: 90vw;
+}
+/* The scrim belongs to the OPEN mobile drawer: it dims the conversation and gives the
+   tap-to-close target. It must NOT appear when the drawer is collapsed (nothing to
+   dismiss), and never on desktop. Showing it on the collapsed state -- the original
+   rule -- left the open drawer untappable. */
+#scrim { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 45; display: none; }
+@media (max-width: 860px) {
+  body:not(.sidebar-collapsed) #scrim { display: block; }
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 860px) {
+  /* Drawer positioning for the overlay sidebar. Use `left`, not margin-left/transform:
+     margin-left on a position:fixed element is relative to its own box and the desktop
+     rule body.sidebar-collapsed #sidebar outranks a bare #sidebar, so the open state kept
+     rendering at -268px. `left` is unambiguous for a fixed element. Both the base and the
+     collapsed rule are declared here at the same specificity so the cascade is predictable. */
+  #sidebar {
+    position: fixed; z-index: 50; top: 0; bottom: 0; left: 0;
+    height: 100%; box-shadow: var(--shadow);
+    margin-left: 0; transform: none;
+    transition: left .22s ease;
+  }
+  body.sidebar-collapsed #sidebar {
+    left: calc(-1 * var(--sidebar-w)); margin-left: 0; transform: none;
+  }
+  #thread-inner { padding: 18px 12px 8px; }
+  #composer-wrap { padding: 10px 10px calc(12px + env(safe-area-inset-bottom)); }
+  #welcome h2 { font-size: 21px; }
+  #hint { display: none; }
+  .msg .bubble { max-width: 92%; }
+}
+@media (max-width: 420px) {
+  .msg .bubble { max-width: 100%; }
+  #topbar-inner { padding: 8px 10px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <aside id="sidebar" aria-label="Chat history">
+    <div class="sb-head">
+      <button class="btn-new" id="newChat" title="New chat (Ctrl+N)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        <span>New chat</span>
+      </button>
+    </div>
+    <div class="sb-scroll" id="sbList"></div>
+    <div class="sb-foot">
+      <button class="icon-btn" id="themeBtn" title="Toggle theme"></button>
+      <span style="flex:1"></span>
+      <span style="font-size:11.5px;color:var(--muted)" id="sbModel">hermes</span>
+    </div>
+  </aside>
+
+  <div id="main">
+      <div id="maincol">
+        <div id="topbar">
+          <div id="topbar-inner">
+      <button class="icon-btn" id="menuBtn" title="Toggle sidebar (Ctrl+K)" aria-label="Toggle sidebar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <div class="title" id="convTitle">New chat</div>
+      <span style="flex:1"></span>
+      <div id="status"><span class="dot" id="dot"></span><span id="statusText">connecting&hellip;</span></div>
+      <button id="actBtn" class="icon-btn" title="Toggle activity panel" aria-label="Toggle activity panel">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h10M3 18h14"/></svg>
+      </button>
+                </div><!-- /topbar-inner -->
+              </div><!-- /topbar -->
+
+            <div id="thread">
+              <div id="thread-inner">
+        <div id="welcome">
+          <h2>Hermes</h2>
+          <p>Your agent &mdash; tools, memory, skills, sessions and Kanban, in the browser.</p>
+          <div class="chips" id="chips">
+            <button class="chip">What can you do?</button>
+            <button class="chip">List my active Kanban tasks</button>
+            <button class="chip">What do you remember about me?</button>
+            <button class="chip">Run a shell command and explain the output</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="composer-wrap">
+      <div id="composer">
+        <div id="stats" class="stats" hidden aria-live="off"></div>
+        <div id="thinking" class="thinking" hidden aria-live="polite"></div>
+        <div id="slash-palette" class="slash" hidden role="listbox" aria-label="Skill commands"></div>
+        <div id="composer-box">
+          <textarea id="input" rows="1" placeholder="Message Hermes&hellip;"
+            autocomplete="off" spellcheck="true" aria-label="Message Hermes"></textarea>
+          <button id="send" title="Send (Enter)" aria-label="Send">
+            <svg id="sendIcon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+        </div>
+        <div id="hint">Enter sends &middot; Shift+Enter newline &middot; Ctrl+N new chat &middot; Esc stops</div>
+      </div>
+    </div>
+    </div><!-- /maincol -->
+
+    <div id="actpanel" class="actpanel" hidden aria-label="Turn structure">
+      <div class="act-head">
+        <span class="act-title">Activity</span>
+        <span id="act-count" class="act-count"></span>
+        <button id="actClose" class="icon-btn act-x" title="Hide activity panel" aria-label="Hide activity panel">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div id="actBody" class="act-body"></div>
+    </div>
+  </div>
+</div>
+
+<div id="scrim"></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+var BOOT = (function () {
+  var el = document.getElementById("hermes-boot");
+  try { return JSON.parse(el.textContent); } catch (e) { return {}; }
+})();
+var KEY = BOOT.apiKey || "";
+var MODEL = "hermes-agent";
+var SESSION_KEY = "hermes_webchat_session";
+
+function $(id) { return document.getElementById(id); }
+var thread = $("thread"), threadInner = $("thread-inner"), input = $("input"),
+    sendBtn = $("send"), sendIcon = $("sendIcon"), sbList = $("sbList"),
+    statusText = $("statusText"), dot = $("dot"), toastEl = $("toast"),
+    convTitle = $("convTitle");
+
+var sessionId = null, busy = false, controller = null, live = null,
+    sessions = [], toastT = null, lastSentUserEl = null;
+
+/* ============================ utilities ============================ */
+function setStatus(t, k) { statusText.textContent = t; dot.className = "dot" + (k ? " " + k : ""); }
+function toast(m) {
+  toastEl.textContent = m; toastEl.style.display = "block";
+  clearTimeout(toastT); toastT = setTimeout(function () { toastEl.style.display = "none"; }, 4200);
+}
+function atBottom() { return thread.scrollHeight - thread.scrollTop - thread.clientHeight < 140; }
+function scrollDown(force) { if (force || atBottom()) thread.scrollTop = thread.scrollHeight; }
+function fmtTime(ts) {
+  if (!ts) return "";
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+function fmtDay(ts) {
+  if (!ts) return "Earlier";
+  var d = new Date(ts * 1000), now = new Date();
+  var days = Math.floor((now - d) / 86400000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return "Previous 7 days";
+  if (days < 30) return "Previous 30 days";
+  return d.toLocaleDateString([], { month: "long", year: "numeric" });
+}
+function copyText(t) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t).then(function () { toast("Copied"); }, fallbackCopy);
+    return;
+  }
+  fallbackCopy();
+  function fallbackCopy() {
+    var ta = document.createElement("textarea");
+    ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast("Copied"); } catch (e) { toast("Copy failed"); }
+    ta.remove();
+  }
+}
+
+/* ============================ api ============================ */
+function api(path, opts) {
+  var o = Object.assign({ headers: {} }, opts || {});
+  o.headers = Object.assign({ "Content-Type": "application/json" }, o.headers);
+  if (KEY) o.headers["Authorization"] = "Bearer " + KEY;
+  return fetch(path, o).then(function (res) {
+    if (res.status === 401) { var e = new Error("Unauthorized - the API key was rejected."); e.status = 401; throw e; }
+    if (!res.ok) {
+      return res.text().then(function (t) {
+        var msg = "HTTP " + res.status;
+        try { var j = JSON.parse(t); msg = (j.error && j.error.message) || msg; } catch (e) {}
+        var err = new Error(msg); err.status = res.status; throw err;
+      });
+    }
+    return res;
+  });
+}
+function apiJSON(p, o) { return api(p, o).then(function (r) { return r.json(); }); }
+
+/* ============================ rendering ============================ */
+function renderMarkdown(node, text) {
+  // Escape-first: every write is textContent, so model/tool output can never inject HTML.
+  node.textContent = "";
+  var parts = String(text == null ? "" : text).split(/```/);
+  parts.forEach(function (chunk, i) {
+    if (i % 2 === 1) {
+      var pre = document.createElement("pre"), code = document.createElement("code");
+      var nl = chunk.indexOf("\n");
+      code.textContent = nl >= 0 ? chunk.slice(nl + 1) : chunk;
+      pre.appendChild(code); node.appendChild(pre);
+      return;
+    }
+    chunk.split("\n").forEach(function (line, li) {
+      if (li) node.appendChild(document.createElement("br"));
+      var h = /^(#{1,4})\s+(.*)$/.exec(line);
+      if (h) {
+        var el = document.createElement("strong");
+        el.textContent = h[2]; node.appendChild(el); return;
+      }
+      var re = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\*[^*\n]+\*)/g, last = 0, m;
+      while ((m = re.exec(line)) !== null) {
+        if (m.index > last) node.appendChild(document.createTextNode(line.slice(last, m.index)));
+        var tok = m[0];
+        if (tok.slice(0, 2) === "**") { var b = document.createElement("strong"); b.textContent = tok.slice(2, -2); node.appendChild(b); }
+        else if (tok.charAt(0) === "`") { var c = document.createElement("code"); c.textContent = tok.slice(1, -1); node.appendChild(c); }
+        else { var em = document.createElement("em"); em.textContent = tok.slice(1, -1); node.appendChild(em); }
+        last = m.index + tok.length;
+      }
+      if (last < line.length) node.appendChild(document.createTextNode(line.slice(last)));
+    });
+  });
+}
+
+function hideWelcome() { var w = $("welcome"); if (w && w.parentNode) w.parentNode.removeChild(w); }
+
+function addMsg(role, text, meta) {
+  hideWelcome();
+  var wrap = document.createElement("div");
+  wrap.className = "msg " + role;
+  var m = document.createElement("div");
+  m.className = "meta";
+  if (role === "user") m.textContent = "You";
+  else if (role === "error") m.textContent = "Error";
+  else if (role === "system") m.textContent = "";
+  else { var t = document.createElement("span"); t.textContent = "Hermes" + (meta && meta.ts ? " \u00b7 " + fmtTime(meta.ts) : ""); m.appendChild(t); }
+  var bubble = document.createElement("div");
+  bubble.className = "bubble";
+  renderMarkdown(bubble, text || "");
+  wrap.appendChild(m);
+  wrap.appendChild(bubble);
+  threadInner.appendChild(wrap);
+  scrollDown();
+  return { wrap: wrap, bubble: bubble, metaEl: m };
+}
+
+function addToolLine(name, preview, failed) {
+  if (!live) return;
+  var row = document.createElement("div");
+  row.className = "tool-line" + (failed ? " err" : "");
+  row.textContent = (failed ? "\u2717 " : "\u2699 ") + name + (preview ? " \u2014 " + String(preview).slice(0, 140) : "");
+  live.tools.appendChild(row);
+  scrollDown();
+}
+
+function startLive() {
+  hideWelcome();
+  var wrap = document.createElement("div");
+  wrap.className = "msg assistant";
+  var m = document.createElement("div"); m.className = "meta";
+  var t = document.createElement("span"); t.textContent = "Hermes \u00b7 " + fmtTime(Date.now() / 1000);
+  m.appendChild(t);
+  var tools = document.createElement("div"); tools.className = "tools";
+  var bubble = document.createElement("div");
+  bubble.className = "bubble caret";
+  wrap.appendChild(m); wrap.appendChild(tools); wrap.appendChild(bubble);
+  threadInner.appendChild(wrap);
+  live = { wrap: wrap, bubble: bubble, tools: tools, text: "" };
+  scrollDown(true);
+}
+function updateLive() { if (live) { renderMarkdown(live.bubble, live.text); scrollDown(); } }
+function finishLive() {
+  if (!live) return;
+  live.bubble.classList.remove("caret");
+  if (!live.text) { live.wrap.parentNode.removeChild(live.wrap); }
+  else { addControls(live.wrap, "assistant"); }
+  live = null;
+}
+
+function bubbleText(wrap) { var b = wrap.querySelector(".bubble"); return b ? b.innerText : ""; }
+
+function addControls(wrap, role) {
+  if (wrap.querySelector(".controls")) return;
+  var box = document.createElement("div");
+  box.className = "controls";
+  function btn(label, title, fn) {
+    var b = document.createElement("button");
+    b.className = "ctl"; b.title = title; b.textContent = label;
+    b.addEventListener("click", fn);
+    box.appendChild(b); return b;
+  }
+  if (role === "assistant") {
+    btn("Copy", "Copy message", function () { copyText(bubbleText(wrap)); });
+    btn("Retry", "Regenerate this response", regenerate);
+  } else {
+    btn("Copy", "Copy message", function () { copyText(bubbleText(wrap)); });
+    btn("Edit", "Edit and resend", function () { startEdit(wrap); });
+  }
+  wrap.appendChild(box);
+}
+
+/* ============================ sending ============================ */
+function setBusy(on) {
+  busy = on;
+  sendBtn.classList.toggle("stop", on);
+  sendBtn.title = on ? "Stop generating (Esc)" : "Send (Enter)";
+  sendBtn.setAttribute("aria-label", on ? "Stop generating" : "Send");
+  sendIcon.innerHTML = on
+    ? '<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>'
+    : '<path d="M12 19V5M5 12l7-7 7 7"/>';
+  setStatus(on ? "generating\u2026" : "ready", on ? "busy" : "ok");
+}
+
+function send(text) {
+  if (busy || !text || !text.trim()) return;
+  // /capabilities is handled entirely in the browser -- it renders a table from
+  // GET /webchat/capabilities and never spends a model turn.
+  var cmd = text.trim().toLowerCase();
+  if (cmd === "/capabilities" || cmd === "/caps") {
+    input.value = ""; autosize(); hideWelcome();
+    showCapabilities();
+    return;
+  }
+  setBusy(true);
+  hideWelcome();
+  var u = addMsg("user", text, { ts: Date.now() / 1000 });
+  addControls(u.wrap, "user");
+  // Track the DOM node of the user turn we are about to create, so Retry/Edit can
+  // rewind the transcript to exactly this point. Without it a Retry on a just-sent
+  // message has no server id to truncate at and would re-append the user turn
+  // (observed: two identical user bubbles after one Retry).
+  lastSentUserEl = u.wrap;
+  input.value = ""; autosize();
+  runTurn(text).then(function () {
+    // Name the conversation from its first user message once the turn lands (the
+    // backend reads the persisted transcript, so it must run after the turn).
+    if (sessionId) maybeAutoName(sessionId, text);
+    return refreshStats().then(refreshSidebar);
+  }, refreshSidebar);
+}
+
+function runTurn(text) {
+  var p = sessionId ? Promise.resolve(sessionId) : newSession();
+  return p.then(function () {
+    controller = new AbortController();
+    startLive();
+    var terminal = false;
+    // Measured, not invented: the CLI keeps latency/velocity in the live agent's
+    // deques, which do not exist here (a fresh agent per turn). Wall-clock from
+    // request to run.completed plus the provider's own output_tokens give the same
+    // two numbers without another call.
+    var t0 = performance.now(), outTok = null;
+    actReset();                  // new turn: fresh structure tree
+    loadThinking();                 // warm the face/verb lists for instant paint
+    setThinking("thinking");        // shows while Hermes thinks, before any output
+    return fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/chat/stream", {
+      method: "POST",
+      headers: Object.assign(
+        { "Content-Type": "application/json", "Accept": "text/event-stream" },
+        KEY ? { "Authorization": "Bearer " + KEY } : {}),
+      body: JSON.stringify({ message: text }),
+      signal: controller.signal
+    }).then(function (res) {
+      if (res.status === 401) throw new Error("Unauthorized - the API key was rejected.");
+      if (!res.ok || !res.body) {
+        return res.text().then(function (t) {
+          var d = ""; try { var j = JSON.parse(t); d = (j.error && j.error.message) || ""; } catch (e) {}
+          throw new Error("HTTP " + res.status + (d ? ": " + d : ""));
+        });
+      }
+      var reader = res.body.getReader(), dec = new TextDecoder(), buf = "";
+      function handleFrame(frame) {
+        if (!frame.trim() || frame.charAt(0) === ":") return;
+        var name = "message", data = "";
+        frame.split("\n").forEach(function (line) {
+          if (line.indexOf("event:") === 0) name = line.slice(6).trim();
+          else if (line.indexOf("data:") === 0) data += line.slice(5).trim();
+        });
+        var pl; try { pl = JSON.parse(data || "{}"); } catch (e) { return; }
+        if (name === "assistant.delta" && pl.delta) {
+          if (live.text) hideThinking();          // real output started
+          live.text += pl.delta; updateLive();
+        }
+        else if (name === "reasoning" || name === "thinking.delta") { setThinking("thinking"); }
+        else if (name === "tool.progress" && pl.tool_name === "_thinking" && pl.delta) {
+          // The model's own narration between calls -- real structure, show it.
+          var lastT = act().nodes[act().nodes.length - 1];
+          if (lastT && lastT.kind === "think" && lastT.status !== "ok") { lastT.text += pl.delta; lastT.preview = lastT.text; }
+          else actAdd({ kind: "think", name: "thinking", text: pl.delta, preview: pl.delta, status: "running" });
+          setThinking("thinking");
+        }
+        else if (name === "assistant.commentary" && pl.text) {
+          var lastC = act().nodes[act().nodes.length - 1];
+          if (lastC && lastC.kind === "note" && lastC.status !== "ok") { lastC.preview = pl.text; lastC.detail = pl.text; }
+          else actAdd({ kind: "note", name: "commentary", preview: pl.text, detail: pl.text, status: "ok" });
+        }
+        else if (name === "tool.started") {
+          addToolLine(pl.tool_name || "tool", pl.preview, false);
+          setThinking("tool", pl.tool_name || "tool");
+          actAdd({ kind: "tool", name: pl.tool_name || "tool", preview: pl.preview,
+                   detail: pl.args ? JSON.stringify(pl.args, null, 1) : null, status: "running" });
+        }
+        else if (name === "tool.completed") {
+          addToolLine("\u2713 " + (pl.tool_name || "tool"), pl.preview, false);
+          setThinking("thinking");
+          actComplete(pl.tool_name || "tool", true);
+          renderAct();
+        }
+        else if (name === "tool.failed") {
+          addToolLine("\u2717 " + (pl.tool_name || "tool"), pl.preview, true);
+          setThinking("thinking");
+          actComplete(pl.tool_name || "tool", false);
+          renderAct();
+        }
+        else if (name === "assistant.completed") {
+          if (pl.content && !live.text) { live.text = pl.content; updateLive(); }
+          act().apiCalls++;
+          terminal = true;
+        }
+        else if (name === "error") { addMsg("error", pl.message || "The run failed."); act().done = true; terminal = true; }
+        else if (name === "run.completed" || name === "done") {
+          if (pl && pl.usage && pl.usage.output_tokens != null) outTok = Number(pl.usage.output_tokens);
+          if (name === "run.completed") {
+            act().done = true;
+            renderAct();
+            var secs = (performance.now() - t0) / 1000;
+            lastTurn = { seconds: secs, outputTokens: outTok };
+            if (outTok && secs > 0) lastTurn.tokPerSec = outTok / secs;
+            refreshStats();          // durable counters are written by now
+            renderStats(null, lastTurn);
+          }
+          terminal = true;
+        }
+      }
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) return;
+          buf += dec.decode(r.value, { stream: true });
+          var frames = buf.split("\n\n"); buf = frames.pop() || "";
+          frames.forEach(handleFrame);
+          return pump();
+        });
+      }
+      return pump().then(function () {
+        hideThinking();
+        finishLive();
+        if (!terminal) addMsg("system", "The stream ended without a reply. Check the server log.");
+        setStatus("ready", "ok");
+      });
+    });
+  }).catch(function (err) {
+    hideThinking();
+    finishLive();
+    if (err && err.name === "AbortError") addMsg("system", "Stopped.");
+    else { addMsg("error", (err && err.message) || String(err)); setStatus("error", "err"); toast((err && err.message) || String(err)); }
+  }).then(function () {
+    busy = false; controller = null; setBusy(false);
+  }, function (err) {
+    hideThinking();
+    finishLive();
+    addMsg("error", (err && err.message) || String(err));
+    busy = false; controller = null; setBusy(false);
+  });
+}
+
+/* ============================ message controls ============================ */
+function lastUserMsgEl() {
+  var us = threadInner.querySelectorAll(".msg.user");
+  return us.length ? us[us.length - 1] : null;
+}
+function removeAfter(el) {
+  var n = el.nextElementSibling;
+  while (n) { var nx = n.nextElementSibling; n.parentNode.removeChild(n); n = nx; }
+}
+// Rewind the persisted transcript to end at `keepId` so the agent resumes from exactly
+// what is left. Uses the same SessionDB primitive as Hermes' own rewind.
+function truncateTo(keepId) {
+  if (!sessionId || !keepId) return Promise.resolve();
+  return apiJSON("/webchat/sessions/" + encodeURIComponent(sessionId) + "/truncate", {
+    method: "POST", body: JSON.stringify({ keep_through_message_id: Number(keepId) })
+  });
+}
+function messageRows() {
+  // The endpoint returns rows under "data" (with "pagination"); tolerate "messages" too.
+  if (!sessionId) return Promise.resolve([]);
+  return apiJSON("/api/sessions/" + encodeURIComponent(sessionId) + "/messages")
+    .then(function (d) { return d.data || d.messages || []; }, function () { return []; });
+}
+
+function regenerate() {
+  if (busy) { toast("Wait for the current reply, or press Esc to stop it."); return; }
+  var u = lastUserMsgEl();
+  if (!u) { toast("Nothing to regenerate."); return; }
+  var text = bubbleText(u);
+  var uid = Number(u.dataset.msgId || 0);   // read BEFORE detaching the node
+  // The user bubble is REPLACED, not kept: the re-send below calls send(), which appends
+  // a fresh user bubble. Leaving the old one in place is what showed two identical user
+  // messages after a Retry (the server transcript stayed correct -- this was DOM-only).
+  // Detach it now, before the async rewind, and re-add the re-sent one afterwards.
+  var placeholder = document.createComment("retrying");
+  if (u.parentNode) u.parentNode.replaceChild(placeholder, u);
+  removeAfter(placeholder);
+  // Rewind the transcript to just BEFORE the user turn, then ask again.
+  //
+  // The match must resolve to the FIRST occurrence of this user row, not the last.
+  // A retry leaves the original user row in place and the re-send appends a second
+  // one, so scanning backwards lands on the duplicate (observed: rows
+  // 119657 user 'probe', 119658 user 'probe' -- keeping the last preserved the copy
+  // and every retry grew the transcript). Truncating to match-1 then removes the
+  // original, leaving exactly one user row.
+  messageRows().then(function (rows) {
+    var conversational = rows.filter(function (m) { return m.role === "user" || m.role === "assistant"; });
+    var idx = -1;
+    if (uid) {
+      for (var k = 0; k < conversational.length; k++) {
+        if (Number(conversational[k].id) === uid) { idx = k; break; }
+      }
+    }
+    if (idx < 0) {
+      for (var i = 0; i < conversational.length; i++) {   // FIRST match, not last
+        if (conversational[i].role === "user"
+            && String(conversational[i].content).trim() === text.trim()) { idx = i; break; }
+      }
+    }
+    if (idx < 0) {
+      for (var j = conversational.length - 1; j >= 0; j--) {
+        if (conversational[j].role === "user") { idx = j; break; }
+      }
+    }
+    if (idx < 0) return null;
+    // Drop this user row and everything after it.
+    return truncateTo(conversational[idx].id - 1);
+  }).then(function () {
+    lastSentUserEl = null;   // the rewind removed it; send() will re-create it
+    send(text);
+  }, function (e) {
+    toast("Could not rewind: " + e.message);
+    lastSentUserEl = null;
+    send(text);
+  });
+}
+
+function startEdit(wrap) {
+  if (busy) { toast("Wait for the current reply, or press Esc to stop it."); return; }
+  var bubble = wrap.querySelector(".bubble"), meta = wrap.querySelector(".meta"),
+      controls = wrap.querySelector(".controls");
+  var area = document.createElement("textarea");
+  area.className = "edit-area";
+  area.value = bubbleText(wrap);
+  var actions = document.createElement("div");
+  actions.className = "edit-actions";
+  var cancel = document.createElement("button");
+  cancel.className = "btn-sm"; cancel.textContent = "Cancel";
+  var save = document.createElement("button");
+  save.className = "btn-sm primary"; save.textContent = "Save & send";
+  actions.appendChild(cancel); actions.appendChild(save);
+
+  function restore() {
+    if (area.parentNode) area.parentNode.removeChild(area);
+    if (actions.parentNode) actions.parentNode.removeChild(actions);
+    if (bubble) bubble.style.display = "";
+    if (meta) meta.style.display = "";
+    if (controls) controls.style.display = "";
+  }
+  cancel.addEventListener("click", restore);
+  save.addEventListener("click", function () {
+    var text = area.value.trim();
+    if (!text) { toast("Message cannot be empty."); return; }
+    var myId = Number(wrap.dataset.msgId || 0);
+    var original = bubbleText(wrap);
+    removeAfter(wrap);
+    if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+    // Rewind to the row BEFORE this user turn. Match the FIRST occurrence (a retry
+    // can leave duplicates; a backward scan would land on the copy), by id when known,
+    // else by the original content, else fall back to the first user row.
+    messageRows().then(function (rows) {
+      var conversational = rows.filter(function (m) { return m.role === "user" || m.role === "assistant"; });
+      var idx = -1;
+      if (myId) {
+        for (var k = 0; k < conversational.length; k++) {
+          if (Number(conversational[k].id) === myId) { idx = k; break; }
+        }
+      }
+      if (idx < 0) {
+        for (var i = 0; i < conversational.length; i++) {   // FIRST match, not last
+          if (conversational[i].role === "user"
+              && String(conversational[i].content).trim() === original.trim()) { idx = i; break; }
+        }
+      }
+      if (idx < 0) {
+        for (var j = 0; j < conversational.length; j++) {
+          if (conversational[j].role === "user") { idx = j; break; }
+        }
+      }
+      if (idx < 0) return null;
+      return truncateTo(conversational[idx].id - 1);
+    }).then(function () {
+      lastSentUserEl = null;
+      send(text);
+    }, function (e) {
+      toast("Could not rewind: " + e.message);
+      lastSentUserEl = null;
+      send(text);
+    });
+  });
+
+  if (bubble) bubble.style.display = "none";
+  if (meta) meta.style.display = "none";
+  if (controls) controls.style.display = "none";
+  wrap.appendChild(area); wrap.appendChild(actions);
+  area.focus();
+  area.setSelectionRange(area.value.length, area.value.length);
+  autosizeEl(area);
+}
+
+/* ============================ sessions / sidebar ============================ */
+function newSession() {
+  // Create the session UNTILED on purpose. Hermes refuses to auto-name a row that
+  // already has a title -- SessionDB._set_session_title skips any non-null title whose
+  // provenance ranks at or above the incoming one -- so seeding "New chat <timestamp>"
+  // here permanently blocked auto-naming (verified: auto returned changed=false against
+  // a timestamped row). A null title also sidesteps the uniqueness check that made the
+  // second New chat fail with "Title already in use by session <id>". The name is
+  // filled in from the first user message, or by hand.
+  return apiJSON("/api/sessions", {
+    method: "POST", body: JSON.stringify({ source: "api_server" })
+  }).then(function (d) {
+    sessionId = (d.session && d.session.id) || d.id || null;
+    try { sessionStorage.setItem(SESSION_KEY, sessionId); } catch (e) {}
+    setTitleBar("New chat");
+    return sessionId;
+  });
+}
+
+function buildWelcome() {
+  var w = document.createElement("div");
+  w.id = "welcome";
+  var h = document.createElement("h2"); h.textContent = "Hermes";
+  var p = document.createElement("p");
+  p.textContent = "Your agent \u2014 tools, memory, skills, sessions and Kanban, in the browser.";
+  var chips = document.createElement("div");
+  chips.className = "chips"; chips.id = "chips";
+  ["What can you do?", "List my active Kanban tasks", "What do you remember about me?",
+   "Run a shell command and explain the output"].forEach(function (label) {
+    var b = document.createElement("button");
+    b.className = "chip"; b.textContent = label;
+    chips.appendChild(b);
+  });
+  chips.addEventListener("click", function (e) {
+    var c = e.target.closest ? e.target.closest(".chip") : null;
+    if (c) { input.value = c.textContent; autosize(); input.focus(); }
+  });
+  w.appendChild(h); w.appendChild(p); w.appendChild(chips);
+  return w;
+}
+
+function newChat() {
+  if (busy) { toast("Wait for the current reply, or press Esc to stop it."); return; }
+  finishLive();
+  sessionId = null;
+  try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+  threadInner.textContent = "";
+  threadInner.appendChild(buildWelcome());
+  convTitle.textContent = "New chat";
+  lastTurn = null;
+  renderStats(null);   // clear: the old chat's counters must not linger
+  hideThinking();
+  setStatus("ready", "ok");
+  input.focus();
+  newSession().then(refreshSidebar, function () {});
+}
+
+function loadSession(id) {
+  if (busy) { toast("Wait for the current reply, or press Esc to stop it."); return; }
+  // Show the stored name in the header immediately; refreshSidebar may not have run yet.
+  var known = sessions.filter(function (x) { return x.id === id; })[0];
+  if (known) setTitleBar(known.title);
+  lastTurn = null;   // per-turn timings belong to the conversation being opened
+  return apiJSON("/api/sessions/" + encodeURIComponent(id) + "/messages").then(function (d) {
+    sessionId = id;
+    try { sessionStorage.setItem(SESSION_KEY, id); } catch (e) {}
+    var msgs = d.data || d.messages || [];
+    threadInner.textContent = "";
+    live = null;
+    msgs.forEach(function (m) {
+      if (m.role === "user") {
+        var r = addMsg("user", m.content, { ts: m.timestamp });
+        r.wrap.dataset.msgId = m.id;
+        addControls(r.wrap, "user");
+      } else if (m.role === "assistant" && m.content) {
+        var r2 = addMsg("assistant", m.content, { ts: m.timestamp });
+        r2.wrap.dataset.msgId = m.id;
+        addControls(r2.wrap, "assistant");
+      }
+    });
+    if (!threadInner.querySelector(".msg")) threadInner.appendChild(buildWelcome());
+    var s = sessions.filter(function (x) { return x.id === id; })[0];
+    convTitle.textContent = (s && s.title) || "Chat";
+    setStatus("ready", "ok");
+    scrollDown(true);
+    markActive();
+    // Stats AFTER sessionId is assigned. Calling it earlier dropped the response on
+    // every page load: refreshStats only renders when the id it fetched matches the
+    // current sessionId, and at that point sessionId was still null -- so the strip
+    // came back empty after a refresh (it only reappeared after the next turn).
+    refreshStats(id);
+  }, function (e) {
+    toast("Could not open that chat: " + e.message);
+    sessionId = null;
+  });
+}
+
+function markActive() {
+  var items = sbList.querySelectorAll(".sb-item");
+  for (var i = 0; i < items.length; i++) {
+    items[i].classList.toggle("active", items[i].dataset.id === sessionId);
+  }
+}
+
+function refreshSidebar() {
+  return apiJSON("/webchat/sidebar").then(function (d) {
+    sessions = d.sessions || [];
+    sbList.textContent = "";
+    var mine = sessions.filter(function (s) { return s.message_count > 0 || s.id === sessionId; });
+    if (!mine.length) {
+      var e = document.createElement("div");
+      e.className = "sb-empty"; e.textContent = "No conversations yet.";
+      sbList.appendChild(e);
+      return;
+    }
+    var group = null;
+    mine.forEach(function (s) {
+      var label = fmtDay(s.last_active);
+      if (label !== group) {
+        group = label;
+        var h = document.createElement("div");
+        h.className = "sb-group"; h.textContent = label;
+        sbList.appendChild(h);
+      }
+      var item = document.createElement("button");
+      item.className = "sb-item"; item.dataset.id = s.id;
+      var t = document.createElement("span");
+      t.className = "t"; t.textContent = s.title || "New chat";
+      t.title = s.title || "New chat";
+      var pen = document.createElement("span");
+      pen.className = "x pen"; pen.textContent = "\u270E"; pen.title = "Rename chat";
+      pen.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        startRename(item, s);
+      });
+      var x = document.createElement("span");
+      x.className = "x"; x.textContent = "\u2715"; x.title = "Delete chat";
+      x.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        apiJSON("/api/sessions/" + encodeURIComponent(s.id), { method: "DELETE" }).then(function () {
+          if (s.id === sessionId) newChat();
+          toast("Deleted");
+          refreshSidebar();
+        }, function (err) { toast("Delete failed: " + err.message); });
+      });
+      item.appendChild(t); item.appendChild(pen); item.appendChild(x);
+      item.addEventListener("click", function () { loadSession(s.id); });
+      item.addEventListener("dblclick", function () { startRename(item, s); });
+      sbList.appendChild(item);
+    });
+    markActive();
+    // Keep the header in step with the stored name. Whoever set it (Hermes' own titler,
+    // auto-name here, or a manual rename), the sidebar is the source of truth -- without
+    // this the header stayed on "New chat" while the sidebar showed the real name.
+    if (sessionId) {
+      var active = sessions.filter(function (x) { return x.id === sessionId; })[0];
+      if (active && active.title) setTitleBar(active.title);
+    }
+  }, function () { /* sidebar is non-critical */ });
+}
+
+/* ============================ naming ============================ */
+function setTitleBar(text) {
+  convTitle.textContent = text || "New chat";
+}
+
+// Rename inline in the sidebar. Enter saves, Escape cancels, blur saves.
+function startRename(item, s) {
+  if (!item || item.querySelector(".sb-rename")) return;
+  var label = item.querySelector(".t");
+  if (!label) return;
+  var input = document.createElement("input");
+  input.className = "sb-rename";
+  input.value = s.title || "";
+  input.maxLength = 100;
+  item.replaceChild(input, label);
+  input.focus();
+  input.select();
+
+  var done = false;
+  function finish(save) {
+    if (done) return;
+    done = true;
+    var val = input.value.trim();
+    if (!save || !val) { refreshSidebar(); return; }
+    setTitle(sessionIdOf(item), val, function () {
+      if (item.dataset.id === sessionId) setTitleBar(val);
+      refreshSidebar();
+    });
+  }
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    e.stopPropagation();   // do not let the composer shortcuts fire
+  });
+  input.addEventListener("blur", function () { finish(true); });
+}
+
+function sessionIdOf(item) { return item ? item.dataset.id : ""; }
+
+convTitle.title = "Click to rename this conversation";
+convTitle.addEventListener("click", startHeaderRename);
+
+// Click the header title to rename the open conversation in place.
+function startHeaderRename() {
+  if (!sessionId) { toast("Start a conversation first"); return; }
+  var cur = sessions.filter(function (x) { return x.id === sessionId; })[0];
+  var box = document.createElement("input");
+  box.className = "sb-rename";
+  box.style.cssText = "font-size:15px;font-weight:600;min-width:180px";
+  box.value = (cur && cur.title) || "New chat";
+  box.maxLength = 100;
+  var old = convTitle;
+  old.parentNode.replaceChild(box, old);
+  box.focus(); box.select();
+  var done = false;
+  function finish(save) {
+    if (done) return;
+    done = true;
+    var val = box.value.trim();
+    box.parentNode.replaceChild(old, box);
+    setTitleBar(old.textContent);
+    if (!save || !val) return;
+    setTitle(sessionId, val, function () { refreshSidebar(); });
+  }
+  box.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    e.stopPropagation();
+  });
+  box.addEventListener("blur", function () { finish(true); });
+}
+
+// PATCH the title through the backend so Hermes records `user` provenance and its
+// auto-titler can never overwrite it. Optimistic: the label updates immediately and
+// is rolled back by refreshSidebar() if the write fails.
+function setTitle(sid, title, done) {
+  if (!sid) { if (done) done(); return; }
+  var t = document.createElement("span");
+  t.className = "t"; t.textContent = title; t.title = title;
+  var item = sbList.querySelector('.sb-item[data-id="' + sid + '"]');
+  if (item && !item.querySelector(".sb-rename")) item.replaceChild(t, item.querySelector(".t"));
+  if (sid === sessionId) setTitleBar(title);
+  apiJSON("/webchat/sessions/" + encodeURIComponent(sid) + "/title", {
+    method: "PATCH",
+    // apiJSON forwards `body` straight to fetch, so it must be a JSON *string*;
+    // passing the object sent "[object Object]" and the backend answered
+    // "Invalid JSON in request body" (verified -- every rename silently failed).
+    body: JSON.stringify({ title: title })
+  }).then(function (d) {
+    if (done) done(d);
+  }, function (err) {
+    toast("Rename failed: " + err.message);
+    refreshSidebar();
+    if (done) done(null);
+  });
+}
+
+// Give a fresh conversation a real name from its first user message. Free (no model
+// call) and writes at `derived` provenance, so any manual rename still wins. Only fires
+// once per session and only while the title is still the "New chat ..." placeholder.
+var autoNamed = {};
+function maybeAutoName(sid, firstUserText) {
+  if (!sid || autoNamed[sid] || !firstUserText) return;
+  var s = sessions.filter(function (x) { return x.id === sid; })[0];
+  if (s && s.title_source === "user") return;         // user named it; leave it alone
+  if (s && s.title && !/^New chat/.test(s.title)) return;  // already has a real name
+  autoNamed[sid] = true;
+  apiJSON("/webchat/sessions/" + encodeURIComponent(sid) + "/title", {
+    method: "PATCH", body: JSON.stringify({ auto: true })
+  }).then(function (d) {
+    if (d && d.changed && d.title) {
+      if (sid === sessionId) setTitleBar(d.title);
+      refreshSidebar();
+    }
+  }, function () { /* silent: a missing name is cosmetic */ });
+}
+
+/* ============================ status strip ============================ */
+// 116.4K -> "116.4K"; 1000000 -> "1.0M". Same compact style as the CLI bar.
+function compactTok(n) {
+  n = Number(n) || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "K";
+  return String(n);
+}
+// 10-cell block bar, the CLI's own glyph pair.
+function blockBar(pct, width) {
+  width = width || 10;
+  var filled = Math.round((Math.max(0, Math.min(100, pct)) / 100) * width);
+  return new Array(filled + 1).join("\u2588") + new Array(Math.max(0, width - filled) + 1).join("\u2591");
+}
+function gradeCtx(pct) { return pct >= 95 ? "bad" : pct > 80 ? "warn" : ""; }
+function gradeHit(pct) { return pct >= 70 ? "good" : pct >= 40 ? "warn" : "bad"; }
+
+var lastTurn = null;   // {seconds, outputTokens, tokPerSec} measured from the stream
+
+function renderStats(s, turn) {
+  var el = $("stats");
+  if (!el) return;
+  if (!s || (!s.model_short && !s.context_tokens)) { el.hidden = true; el.textContent = ""; return; }
+  var segs = [];
+  function seg(cls, txt, title) {
+    segs.push('<span class="seg ' + (cls || "") + '"' + (title ? ' title="' + title + '"' : "") + ">" + txt + "</span>");
+  }
+  function sep() { segs.push('<span class="sep">│</span>'); }
+
+  if (s.model_short) seg("model", "☤ " + esc(s.model_short), s.model || "");
+  sep();
+
+  if (s.context_length) {
+    var ctxTxt = "~" + compactTok(s.context_tokens) + "/" + compactTok(s.context_length)
+      + (s.context_pinned ? " pinned" : "");
+    seg("bar", ctxTxt, "prompt tokens in context window (input + cache read + cache write)");
+    sep();
+    if (s.context_percent != null) {
+      seg("bar " + gradeCtx(s.context_percent), "[" + blockBar(s.context_percent) + "] ~" + s.context_percent + "%",
+          "context window used");
+      sep();
+    }
+  }
+  if (s.cache_hit_pct != null) {
+    seg(gradeHit(s.cache_hit_pct), "◎ " + s.cache_hit_pct + "%", "prompt cache hit rate this session");
+    sep();
+  }
+  var t = turn || lastTurn;
+  if (t && t.seconds) {
+    // These two are NOT the same as the CLI bar's, and the tooltips say so: the CLI
+    // reads per-call API latency from the live agent's deques, which do not exist
+    // here (a fresh agent per turn, no persisted latency -- only session timestamps).
+    // So this is end-to-end wall-clock for the turn, which also covers tool calls and
+    // Hermes' auxiliary title pass, and end-to-end effective throughput.
+    seg("", "◷ " + t.seconds.toFixed(1) + "s", "total wall-clock for the last turn "
+        + "(includes tool calls; the CLI's \u25f7 is per-call API latency)");
+    sep();
+    if (t.tokPerSec) {
+      seg("", "↑ " + t.tokPerSec.toFixed(1) + " tok/s",
+          "output tokens per second, end-to-end");
+    }
+  }
+  // Drop a trailing separator.
+  while (segs.length && segs[segs.length - 1].indexOf("sep") !== -1) segs.pop();
+  el.innerHTML = segs.join(" ");
+  el.hidden = false;
+}
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+
+function refreshStats(sid) {
+  // Default to the open session, but allow an explicit id: loadSession calls this
+  // before it reassigns sessionId, which would otherwise read the PREVIOUS chat.
+  var id = sid || sessionId;
+  if (!id) { renderStats(null); return Promise.resolve(); }
+  return apiJSON("/webchat/sessions/" + encodeURIComponent(id) + "/stats")
+    .then(function (s) {
+      // Ignore a response for a chat the user has since navigated away from.
+      if (id === sessionId) renderStats(s);
+    }, function () { /* cosmetic */ });
+}
+
+/* ============================ activity panel ============================ */
+// Live turn structure, built ONLY from events the stream actually carries:
+//   run.started / tool.started / tool.completed / tool.progress(_thinking) /
+//   assistant.commentary / assistant.completed / run.completed
+//
+// Deliberate limit: the API stream sends NO depth, parent or tool_call_id, so
+// nested calls and subagent children are NOT recoverable here. Hermes pairs a
+// start with its completion by tool_name only, so parallel batches are inferred
+// from consecutive starts with no completion between them -- that inference is
+// labelled as such in the UI rather than presented as true nesting.
+var ACT = null;
+
+function actNewTurn() {
+  return { t0: Date.now(), nodes: [], apiCalls: 0, done: false, expanded: true, detail: null };
+}
+function act() {
+  if (!ACT) ACT = actNewTurn();
+  return ACT;
+}
+function actReset() { ACT = null; renderAct(); }
+
+function fmtMs(ms) {
+  if (ms == null) return "";
+  if (ms < 1000) return Math.round(ms) + "ms";
+  if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
+  return Math.floor(ms / 60000) + "m " + Math.round((ms % 60000) / 1000) + "s";
+}
+
+// Match a completion to the oldest still-running call with the same tool name.
+function actComplete(name, ok) {
+  var a = act();
+  for (var i = a.nodes.length - 1; i >= 0; i--) {
+    var n = a.nodes[i];
+    if (n.kind === "tool" && n.name === name && n.status === "running") {
+      n.ms = Date.now() - n.t0;
+      n.status = ok ? "ok" : "err";
+      return;
+    }
+  }
+}
+function actAdd(node) {
+  var a = act();
+  node.t0 = Date.now();
+  a.nodes.push(node);
+  renderAct();
+  return node;
+}
+
+function renderAct() {
+  var body = $("actBody"), cnt = $("actCount");
+  var panel = $("actpanel");
+  if (!body) return;
+  if (!ACT || !ACT.nodes.length) {
+    body.textContent = "";
+    var e = document.createElement("div");
+    e.className = "act-empty";
+    e.textContent = "Send a message to watch Hermes work.";
+    body.appendChild(e);
+    if (cnt) cnt.textContent = "";
+    if (panel && panel.hidden === false && !$("actBody").dataset.note) {
+      var n = document.createElement("div");
+      n.className = "act-note";
+      n.textContent = "Structure comes from live stream events. Nested calls and subagents are not exposed by the API, so they cannot be shown.";
+      body.appendChild(n);
+      $("actBody").dataset.note = "1";
+    }
+    return;
+  }
+  body.textContent = "";
+  var a = ACT;
+  var done = a.nodes.filter(function (n) { return n.kind === "tool"; }).length;
+  if (cnt) cnt.textContent = done ? done + " steps" : "";
+  var wrap = document.createElement("div");
+  wrap.className = "act-turn";
+
+  // Turn header
+  var hdr = document.createElement("div");
+  hdr.className = "row";
+  hdr.innerHTML = '<span class="tw">' + (a.expanded ? "\u25be" : "\u25b8") + '</span>'
+    + '<span class="nm">turn</span>'
+    + '<span class="pv">' + a.nodes.length + ' steps'
+    + (a.apiCalls ? " \u00b7 " + a.apiCalls + " api calls" : "") + '</span>'
+    + (a.done ? '<span class="ms">' + fmtMs(Date.now() - a.t0) + '</span>'
+              : '<span class="sp"></span>');
+  hdr.addEventListener("click", function () { a.expanded = !a.expanded; renderAct(); });
+  wrap.appendChild(hdr);
+
+  if (a.expanded) {
+    // Group consecutive tool starts (a parallel batch) under one label.
+    var i = 0;
+    while (i < a.nodes.length) {
+      var n = a.nodes[i];
+      if (n.kind === "tool" && actIsBatch(a, i)) {
+        var batch = [], j = i;
+        while (j < a.nodes.length && a.nodes[j].kind === "tool"
+               && a.nodes[j].groupId === n.groupId) { batch.push(a.nodes[j]); j++; }
+        var btag = document.createElement("div");
+        btag.className = "act-batch";
+        btag.textContent = "\u2295 " + batch.length + " parallel";
+        wrap.appendChild(btag);
+        var kids = document.createElement("div");
+        kids.className = "act-kids";
+        batch.forEach(function (b) { kids.appendChild(actRow(b)); });
+        wrap.appendChild(kids);
+        i = j;
+      } else {
+        wrap.appendChild(actRow(n));
+        i++;
+      }
+    }
+  }
+  body.appendChild(wrap);
+}
+
+// A batch = this tool start has no completion before the next node AND the next
+// node is also a tool start. That is the stream's only signal for concurrency.
+var _g = 0;
+function actIsBatch(a, i) {
+  var n = a.nodes[i], m = a.nodes[i + 1];
+  if (!m || m.kind !== "tool") return false;
+  if (n.status !== "running" && !(i + 2 < a.nodes.length)) return false;
+  // assign/reuse a group id across a contiguous run of starts
+  if (!n.groupId) {
+    _g++;
+    n.groupId = _g;
+    var k = i + 1;
+    while (k < a.nodes.length && a.nodes[k].kind === "tool" && a.nodes[k].status === "running") {
+      a.nodes[k].groupId = _g; k++;
+    }
+    if (k - i > 1) return true;
+    n.groupId = null;
+  }
+  return !!n.groupId;
+}
+
+function actRow(n) {
+  var row = document.createElement("div");
+  row.className = "row";
+  var icon = n.kind === "tool" ? "\u2699" : (n.kind === "think" ? "\u2726" : "\u25c8");
+  var st = n.status === "ok" ? '<span class="st ok">\u2713</span>'
+           : n.status === "err" ? '<span class="st err">\u2717</span>'
+           : n.status === "running" ? '<span class="st run">\u2026</span>' : "";
+  row.innerHTML = '<span class="ico">' + icon + '</span>'
+    + '<span class="nm">' + esc(n.name) + '</span>'
+    + '<span class="pv">' + esc(n.preview || "") + '</span>'
+    + (n.ms != null ? '<span class="ms">' + fmtMs(n.ms) + '</span>' : "")
+    + st;
+  row.addEventListener("click", function () {
+    if (!n.detail) return;
+    n.expanded = !n.expanded;
+    var ex = row.nextSibling;
+    if (n.expanded && ex && ex.className === "act-detail") return;
+    if (!n.expanded) { if (ex && ex.className === "act-detail") ex.remove(); return; }
+    var d = document.createElement("div");
+    d.className = "act-detail";
+    var pre = document.createElement("pre");
+    pre.textContent = n.detail;
+    d.appendChild(pre);
+    row.parentNode.insertBefore(d, row.nextSibling);
+  });
+  return row;
+}
+
+/* ============================ capability table ============================ */
+function capTable(data) {
+  var w = document.createElement("div");
+  w.className = "capwrap";
+  var groups = (data && data.groups) || [];
+  var nrows = groups.reduce(function (a, g) { return a + (g.rows || []).length; }, 0);
+  var hd = document.createElement("div");
+  hd.className = "hd";
+  hd.innerHTML = '<span>Hermes capabilities</span>'
+    + '<span class="n">' + nrows + " rows \u00b7 " + groups.length + " groups</span>";
+  w.appendChild(hd);
+  if (data && data.config_error) {
+    var ce = document.createElement("div");
+    ce.className = "caperr";
+    ce.textContent = "config.yaml unreadable: " + data.config_error;
+    w.appendChild(ce);
+  }
+  groups.forEach(function (g) {
+    var grp = document.createElement("div");
+    grp.className = "capgrp";
+    var gh = document.createElement("div");
+    gh.className = "gh";
+    gh.textContent = g.title;
+    grp.appendChild(gh);
+    var rows = g.rows || [];
+    if (!rows.length) {
+      var em = document.createElement("div");
+      em.className = "capempty";
+      em.textContent = g.empty || "nothing configured";
+      grp.appendChild(em);
+    } else {
+      var t = document.createElement("table");
+      t.className = "cap";
+      rows.forEach(function (r) {
+        var tr = document.createElement("tr");
+        var td1 = document.createElement("td"); td1.className = "f"; td1.textContent = r.field;
+        var td2 = document.createElement("td"); td2.className = "v"; td2.textContent = r.value;
+        tr.appendChild(td1); tr.appendChild(td2);
+        if (r.note) {
+          var td3 = document.createElement("td"); td3.className = "n"; td3.textContent = r.note;
+          tr.appendChild(td3);
+        } else if (rows.some(function (x) { return x.note; })) {
+          var td4 = document.createElement("td"); td4.className = "n"; td4.textContent = "";
+          tr.appendChild(td4);
+        }
+        t.appendChild(tr);
+      });
+      grp.appendChild(t);
+    }
+    w.appendChild(grp);
+  });
+  return w;
+}
+
+async function showCapabilities() {
+  var thread = $("thread");
+  var wrap = document.createElement("div");
+  wrap.className = "msg assistant";
+  var bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.style.padding = "0";
+  bubble.textContent = "Reading capabilities\u2026";
+  wrap.appendChild(bubble);
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+  try {
+    var r = await fetch("/webchat/capabilities", {
+      headers: { "Authorization": "Bearer " + KEY }, cache: "no-store"
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    var data = await r.json();
+    bubble.textContent = "";
+    bubble.style.padding = "";
+    bubble.appendChild(capTable(data));
+  } catch (err) {
+    bubble.textContent = "Could not load capabilities: " + (err && err.message ? err.message : err);
+  }
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/* ============================ thinking line ============================ */
+// Faces and verbs come from the server, which reads agent.display.KawaiiSpinner --
+// the CLI's own lists, honouring the active skin. A local copy would drift.
+var THINK = null, thinkTimer = null, thinkI = 0, thinkMode = null, thinkTool = "";
+
+function loadThinking() {
+  if (THINK) return Promise.resolve(THINK);
+  return apiJSON("/webchat/thinking").then(function (d) {
+    THINK = { faces: d.faces || [], verbs: d.verbs || [] };
+    return THINK;
+  }, function () { THINK = { faces: [], verbs: [] }; return THINK; });
+}
+
+function hideThinking() {
+  var el = $("thinking");
+  if (el) { el.hidden = true; el.textContent = ""; }
+  if (thinkTimer) { clearInterval(thinkTimer); thinkTimer = null; }
+  thinkMode = null; thinkTool = "";
+}
+
+function drawThinking() {
+  var el = $("thinking");
+  if (!el || !thinkMode) return;
+  var faces = (THINK && THINK.faces) || [];
+  var verbs = (THINK && THINK.verbs) || [];
+  var face = faces.length ? faces[thinkI % faces.length] : "";
+  var verb = verbs.length ? verbs[thinkI % verbs.length] : "thinking";
+  thinkI++;   // advance AFTER reading both, so face and verb stay paired
+  el.textContent = "";
+  if (face) { var f = document.createElement("span"); f.className = "face"; f.textContent = face; el.appendChild(f); }
+  var v = document.createElement("span");
+  v.className = "verb"; v.textContent = verb;
+  el.appendChild(v);
+  // Once a tool starts, the verb is noise -- say what is actually running.
+  if (thinkMode === "tool" && thinkTool) {
+    v.className = "tool";
+    v.textContent = thinkTool;
+  }
+  var d = document.createElement("span");
+  d.className = "dots";
+  el.appendChild(d);
+}
+
+// mode: "thinking" before any output, "tool" once a tool runs, null to hide.
+function setThinking(mode, toolName) {
+  var el = $("thinking");
+  if (!el) return;
+  if (!mode) { hideThinking(); return; }
+  var changed = mode !== thinkMode;
+  thinkMode = mode;
+  if (toolName) thinkTool = toolName;
+  el.hidden = false;
+  if (changed) thinkI = Math.floor(Math.random() * 1000);   // desync between turns
+  drawThinking();
+  if (!thinkTimer) thinkTimer = setInterval(drawThinking, 1900);
+}
+
+/* ============================ slash palette ============================ */
+// Skills come from the server, which calls Hermes' own scan_skill_commands() -- the
+// same source the CLI palette uses, so the names and descriptions match exactly.
+var SKILLS = null, slashSel = 0, slashMatches = [];
+
+function loadSkills() {
+  if (SKILLS) return Promise.resolve(SKILLS);
+  return apiJSON("/webchat/skills").then(function (d) {
+    SKILLS = d.skills || [];
+    return SKILLS;
+  }, function () { SKILLS = []; return SKILLS; });
+}
+
+// Only offer the palette when the caret sits in the FIRST token: "/foo" at the start is
+// a command, but "see /tmp" mid-sentence is not.
+function slashQuery() {
+  var v = input.value, pos = input.selectionStart;
+  if (pos !== v.length) return null;              // caret not at the end -> ignore
+  if (v.charAt(0) !== "/") return null;
+  if (/\s/.test(v)) return null;                  // already moved past the command
+  return v.slice(1).toLowerCase();
+}
+
+function closeSlash() {
+  var el = $("slash-palette");
+  if (el) { el.hidden = true; el.textContent = ""; }
+  slashMatches = [];
+}
+function applySlash(cmd) {
+  input.value = cmd + " ";
+  closeSlash();
+  autosize();
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function renderSlash() {
+  var q = slashQuery();
+  if (q === null) { closeSlash(); return false; }
+  // /capabilities is a WEBCHAT command, not a Hermes skill: the table is built from
+  // this install's live config, so it is offered alongside the scanned skills.
+  var LOCAL = [{ command: "/capabilities", name: "Capabilities",
+                 description: "Table of what this Hermes install can do" }];
+  var all = LOCAL.concat(SKILLS || []);
+  var pool = q ? all.filter(function (s) {
+    return s.command.slice(1).indexOf(q) === 0 || s.name.toLowerCase().indexOf(q) !== -1;
+  }) : all;
+  // Cap the list: 190 skills is unusable to scroll, and the useful ones sort first.
+  slashMatches = pool.slice(0, 60);
+  slashSel = 0;
+  var el = $("slash-palette");
+  if (!el) return false;
+  el.textContent = "";
+  var head = document.createElement("div");
+  head.className = "slash-head";
+  head.textContent = slashMatches.length
+    ? (q ? slashMatches.length + " of " + all.length + " skills" : all.length + " skills \u00b7 type to filter")
+    : "Skills";
+  el.appendChild(head);
+  if (!slashMatches.length) {
+    var e = document.createElement("div");
+    e.className = "slash-empty";
+    e.textContent = "No skill matches \u201c/" + q + "\u201d.";
+    el.appendChild(e);
+  }
+  slashMatches.forEach(function (s, i) {
+    var row = document.createElement("div");
+    row.className = "slash-row" + (i === 0 ? " sel" : "");
+    row.setAttribute("role", "option");
+    var c = document.createElement("span");
+    c.className = "cmd"; c.textContent = s.command;
+    var d = document.createElement("span");
+    d.className = "desc"; d.textContent = s.description || s.name;
+    row.appendChild(c); row.appendChild(d);
+    row.addEventListener("mousedown", function (ev) { ev.preventDefault(); applySlash(s.command); });
+    el.appendChild(row);
+  });
+  el.hidden = false;
+  return true;
+}
+
+/* ============================ composer ============================ */
+function autosize() { autosizeEl(input); }
+function autosizeEl(ta) {
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, Math.floor(window.innerHeight * 0.42)) + "px";
+}
+input.addEventListener("input", function () {
+  autosize();
+  if (SKILLS === null) { loadSkills().then(renderSlash); return; }
+  renderSlash();
+});
+// Paste: insert clipboard text verbatim (never interpreted as HTML) and grow to fit.
+input.addEventListener("paste", function (e) {
+  var text = (e.clipboardData || window.clipboardData).getData("text");
+  if (!text) return;
+  e.preventDefault();
+  var start = input.selectionStart, end = input.selectionEnd;
+  input.value = input.value.slice(0, start) + text + input.value.slice(end);
+  input.selectionStart = input.selectionEnd = start + text.length;
+  autosize();
+});
+input.addEventListener("keydown", function (e) {
+  // The palette owns the keyboard while it is open: Tab completes, arrows move,
+  // Enter accepts, Escape dismisses -- and plain Enter must NOT send a bare "/".
+  var pal = $("slash-palette");
+  var palOpen = pal && !pal.hidden && slashMatches.length;
+  if (palOpen) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      var rows = pal.querySelectorAll(".slash-row");
+      if (!rows.length) return;
+      slashSel = (slashSel + (e.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length;
+      for (var i = 0; i < rows.length; i++) rows[i].classList.toggle("sel", i === slashSel);
+      rows[slashSel].scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      applySlash(slashMatches[slashSel].command);
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      if (slashMatches.length) { applySlash(slashMatches[slashSel].command); return; }
+      closeSlash();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeSlash();
+      return;
+    }
+  }
+  if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (!busy) send(input.value);
+  } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    if (!busy) send(input.value);
+  } else if (e.key === "Escape" && busy && controller) {
+    e.preventDefault();
+    controller.abort();
+  }
+  // Shift+Enter is deliberately NOT handled: the browser inserts the newline.
+});
+// Clicking away dismisses the palette.
+input.addEventListener("blur", function () { setTimeout(closeSlash, 120); });
+sendBtn.addEventListener("click", function () {
+  closeSlash();
+  if (busy && controller) controller.abort(); else send(input.value);
+});
+// A cached tab kept showing stale strip numbers (observed: ~329K/~33% for a session
+// whose real context was 32.9K/3.3%, because the page had been loaded before the
+// usage-anchor fix). Refetch whenever the tab becomes visible again.
+document.addEventListener("visibilitychange", function () {
+  if (!document.hidden && sessionId) refreshStats();
+});
+window.addEventListener("focus", function () {
+  if (sessionId) refreshStats();
+});
+
+$("actClose").addEventListener("click", function () { setActPanel(false); });
+function setActPanel(on) {
+  var p = $("actpanel");
+  if (!p) return;
+  p.hidden = !on;
+  try { localStorage.setItem("hermes_act", on ? "1" : "0"); } catch (e) {}
+  if (on) renderAct();
+}
+$("actBtn").addEventListener("click", function () { setActPanel($("actpanel").hidden); });
+
+$("newChat").addEventListener("click", newChat);
+$("menuBtn").addEventListener("click", function () {
+  document.body.classList.toggle("sidebar-collapsed");
+  try { localStorage.setItem("hermes_sb", document.body.classList.contains("sidebar-collapsed") ? "1" : "0"); } catch (e) {}
+});
+// Tap-outside closes the mobile drawer. The scrim is only ever visible on mobile while
+// the drawer is OPEN, so this must ADD the collapsed class; removing it was a no-op and
+// left the drawer stuck open.
+$("scrim").addEventListener("click", function () {
+  document.body.classList.add("sidebar-collapsed");
+});
+
+// Below the mobile breakpoint the sidebar is an overlay, so it must start (and return)
+// hidden. init() only applies this at load time; a resize into a narrow window would
+// otherwise leave a 268px drawer covering the conversation.
+var MOBILE_BP = 860;
+function applyResponsiveSidebar() {
+  var narrow = window.matchMedia && window.matchMedia("(max-width: " + MOBILE_BP + "px)").matches;
+  if (narrow) document.body.classList.add("sidebar-collapsed");
+}
+if (window.matchMedia) {
+  var mq = window.matchMedia("(max-width: " + MOBILE_BP + "px)");
+  if (mq.addEventListener) mq.addEventListener("change", applyResponsiveSidebar);
+  else if (mq.addListener) mq.addListener(applyResponsiveSidebar);
+}
+document.addEventListener("keydown", function (e) {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") { e.preventDefault(); newChat(); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); $("menuBtn").click(); }
+});
+$("chips").addEventListener("click", function (e) {
+  var c = e.target.closest ? e.target.closest(".chip") : null;
+  if (c) { input.value = c.textContent; autosize(); input.focus(); }
+});
+
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  $("themeBtn").innerHTML = t === "dark"
+    ? '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'
+    : '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+}
+$("themeBtn").addEventListener("click", function () {
+  var next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  setTheme(next);
+  try { localStorage.setItem("hermes_theme", next); } catch (e) {}
+});
+
+/* ============================ boot ============================ */
+(function init() {
+  var missing = ["thread", "thread-inner", "input", "send", "sidebar", "sbList",
+                 "newChat", "menuBtn", "themeBtn", "convTitle"]
+    .filter(function (id) { return !document.getElementById(id); });
+  if (missing.length) {
+    document.body.innerHTML = '<p style="padding:20px;font:14px sans-serif;color:#ef4444">'
+      + "UI missing element(s): " + missing.join(", ") + "</p>";
+    return;
+  }
+  var theme = "dark", sb = "0";
+  try { theme = localStorage.getItem("hermes_theme") || "dark"; sb = localStorage.getItem("hermes_sb") || "0"; } catch (e) {}
+  setTheme(theme);
+  if (sb === "1") document.body.classList.add("sidebar-collapsed");
+  // Panel open state: an explicit choice wins; otherwise default ON for wide screens so
+// the structure view is discoverable without hunting for the header button. Narrow
+// screens leave it off -- there is no room beside the chat.
+  var actPref = null;
+  try { actPref = localStorage.getItem("hermes_act"); } catch (e) {}
+  if (actPref === "1") $("actpanel").hidden = false;
+  else if (actPref === null && window.innerWidth >= 1100) $("actpanel").hidden = false;
+  if (window.matchMedia && window.matchMedia("(max-width: 860px)").matches) {
+    document.body.classList.add("sidebar-collapsed");
+  }
+  autosize();
+  loadThinking();   // prefetch faces/verbs so the first turn paints without delay
+  loadSkills();     // same for the "/" palette: warm it at boot, not on first keystroke
+
+  if (!KEY) {
+    setStatus("no key", "err");
+    addMsg("error", "No API key was injected by the server. Restart hermes_webchat to mint one.");
+    return;
+  }
+  apiJSON("/v1/models").then(function (m) {
+    $("sbModel").textContent = (m.data && m.data[0] && m.data[0].id) || MODEL;
+  }, function () {});
+
+  var stored = null;
+  try { stored = sessionStorage.getItem(SESSION_KEY); } catch (e) {}
+  var chain = stored ? loadSession(stored) : Promise.resolve();
+  chain.then(function () {
+    if (!sessionId) return newSession();
+    return null;
+  }).then(function () {
+    return refreshSidebar();
+  }).then(function () {
+    setStatus("ready", "ok");
+    input.focus();
+  }, function (e) {
+    setStatus("offline", "err");
+    addMsg("error", "Cannot reach the Hermes server: " + ((e && e.message) || e));
+  });
+})();
+</script>
+</body>
+</html>
