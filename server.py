@@ -289,7 +289,144 @@ class WebChatAdapter(APIServerAdapter):
         routes.append((
             "GET", "/webchat/capabilities",
             self._handle_webchat_capabilities))
+        routes.append((
+            "GET", "/webchat/models",
+            self._handle_webchat_models))
+        routes.append((
+            "POST", "/webchat/model",
+            self._handle_webchat_model_switch))
         return routes
+
+    async def _handle_webchat_models(self, request: "web.Request") -> "web.Response":
+        """GET /webchat/models -- the model list plus the current selection.
+
+        Read-only. The provider catalog is probed live by the CLI's own resolver, so this
+        can be slow on a cold cache; the frontend treats a failure as "no catalog" and
+        still lets you type a model name, because typing a name must never depend on a
+        catalog probe succeeding.
+        """
+        from aiohttp import web as aio_web
+
+        err = self._check_auth(request)
+        if err:
+            return err
+
+        def build() -> Dict[str, Any]:
+            # hermes_constants.get_hermes_home + yaml is the same read the capabilities
+            # route uses. The module-level load_config() is the WEBCHAT JSON config and
+            # parsing config.yaml with it raised JSONDecodeError.
+            from hermes_constants import get_hermes_home
+            import yaml
+            cfg = yaml.safe_load(
+                (get_hermes_home() / "config.yaml").read_text(encoding="utf-8")) or {}
+            model_cfg = cfg.get("model") or {}
+            current = str(model_cfg.get("default") or model_cfg.get("model") or "")
+            provider = str(model_cfg.get("provider") or "")
+            out: Dict[str, Any] = {
+                "current": current, "provider": provider,
+                "context_length": int(model_cfg.get("context_length") or 0) or None,
+                "models": [], "providers": [], "note": "",
+            }
+            try:
+                from hermes_cli.model_switch import list_provider_models  # type: ignore
+            except Exception:
+                list_provider_models = None  # type: ignore
+            # Every provider that has credentials, so the picker can show them grouped.
+            try:
+                from hermes_cli.model_switch import get_authenticated_provider_slugs  # type: ignore
+                slugs = get_authenticated_provider_slugs(
+                    current_provider=provider,
+                    user_providers=cfg.get("providers") or {},
+                    custom_providers=cfg.get("custom_providers") or [])
+            except Exception as exc:
+                slugs = []
+                out["note"] = f"provider list unavailable: {type(exc).__name__}"
+            for slug in slugs:
+                try:
+                    names = list(list_provider_models(slug)) if list_provider_models else []
+                except Exception:
+                    names = []
+                out["providers"].append({"provider": slug, "count": len(names)})
+                for n in names:
+                    out["models"].append({"id": str(n), "provider": slug})
+            # A flat unique list keeps the datalist simple while the grouped list stays
+            # available for anything that wants provider context.
+            seen, flat = set(), []
+            for m in out["models"]:
+                if m["id"].lower() not in seen:
+                    seen.add(m["id"].lower())
+                    flat.append(m["id"])
+            out["model_ids"] = flat
+            return out
+
+        try:
+            data = await asyncio.to_thread(build)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("model list failed: %s", exc)
+            return aio_web.json_response({"error": f"{type(exc).__name__}: {exc}"}, status=500)
+        return aio_web.json_response(data)
+
+    async def _handle_webchat_model_switch(self, request: "web.Request") -> "web.Response":
+        """POST /webchat/model -- switch the model for THIS install.
+
+        Body: ``{"model": "<name>", "provider": "<slug|>", "persist": false}``.
+
+        Persisting rewrites ``model.default``/``model.provider`` in config.yaml, which
+        changes the model for every future session -- so it is opt-in and defaults to off.
+        Without ``persist`` the change applies to the running WebChat only.
+        """
+        from aiohttp import web as aio_web
+
+        err = self._check_auth(request)
+        if err:
+            return err
+        try:
+            payload = await request.json()
+        except Exception:
+            return aio_web.json_response({"error": "bad json"}, status=400)
+        wanted = str(payload.get("model") or "").strip()
+        explicit_provider = str(payload.get("provider") or "").strip()
+        persist = bool(payload.get("persist"))
+        if not wanted and not explicit_provider:
+            return aio_web.json_response({"error": "model required"}, status=400)
+
+        def apply() -> Dict[str, Any]:
+            from hermes_constants import get_hermes_home
+            from hermes_cli.model_switch import switch_model
+            import yaml
+            cfg_path = get_hermes_home() / "config.yaml"
+            cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+            model_cfg = cfg.get("model") or {}
+            result = switch_model(
+                wanted,
+                current_provider=str(model_cfg.get("provider") or ""),
+                current_model=str(model_cfg.get("default") or model_cfg.get("model") or ""),
+                current_base_url=str(model_cfg.get("base_url") or ""),
+                explicit_provider=explicit_provider,
+                user_providers=cfg.get("providers") or {},
+                custom_providers=cfg.get("custom_providers") or [])
+            if not getattr(result, "success", False):
+                return {"ok": False, "error": str(
+                    getattr(result, "message", "") or "switch failed")}
+            if persist:
+                from hermes_cli.model_switch import persist_model_selection
+                persist_model_selection(result, cfg_path)
+            return {
+                "ok": True, "model": result.new_model,
+                "provider": result.target_provider,
+                "provider_label": getattr(result, "provider_label", "") or "",
+                "context_length": getattr(result, "context_length", None),
+                "persisted": persist,
+                "warning": getattr(result, "message", "") or "",
+            }
+
+        try:
+            out = await asyncio.to_thread(apply)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("model switch failed: %s", exc)
+            return aio_web.json_response(
+                {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=500)
+        return aio_web.json_response(out, status=200 if out.get("ok") else 400)
 
     async def _handle_webchat_capabilities(self, request: "web.Request") -> "web.Response":
         """GET /webchat/capabilities — what this Hermes install can actually do.

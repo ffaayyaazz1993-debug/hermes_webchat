@@ -550,7 +550,12 @@ function api(path, opts) {
     if (!res.ok) {
       return res.text().then(function (t) {
         var msg = "HTTP " + res.status;
-        try { var j = JSON.parse(t); msg = (j.error && j.error.message) || msg; } catch (e) {}
+        try {
+          var j = JSON.parse(t);
+          // Hermes returns {error:{message}}; this app's own routes return {error:"text"}.
+          msg = (j.error && j.error.message) || (typeof j.error === "string" && j.error) ||
+                j.message || msg;
+        } catch (e) {}
         var err = new Error(msg); err.status = res.status; throw err;
       });
     }
@@ -690,6 +695,13 @@ function send(text) {
   if (cmd === "/capabilities" || cmd === "/caps") {
     input.value = ""; autosize(); hideWelcome();
     showCapabilities();
+    return;
+  }
+  // /model is also browser-side: it reads GET /webchat/models and POSTs to
+  // /webchat/model, so picking a model never spends a model turn.
+  if (cmd === "/model" || cmd.indexOf("/model ") === 0) {
+    input.value = ""; autosize(); hideWelcome();
+    showModel(text.trim().slice(6).trim());
     return;
   }
   setBusy(true);
@@ -1565,6 +1577,97 @@ function capTable(data) {
   return w;
 }
 
+/* ---- /model ----------------------------------------------------------------
+   `/model`            -> list the current model and every available one
+   `/model <name>`     -> switch for this session
+   `/model <name> --save` -> switch and persist to config.yaml (all sessions)
+   `/model <name> --provider <slug>` -> switch provider too
+   Nothing here spends a model turn. */
+var MODELS = null;
+
+function showModel(arg) {
+  var persist = /(^|\s)--save(\s|$)/.test(arg);
+  var provMatch = arg.match(/--provider\s+(\S+)/);
+  var provider = provMatch ? provMatch[1] : "";
+  var name = arg.replace(/--save/g, "").replace(/--provider\s+\S+/g, "").trim();
+
+  if (!name && !provider) {
+    showModelList(MODELS && MODELS.current ? MODELS : null);
+    return;
+  }
+  apiJSON("/webchat/model", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: name, provider: provider, persist: persist })
+  }).then(function (d) {
+    if (!d.ok) { addMsg("assistant", "model switch failed: " + (d.error || "unknown")); return; }
+    MODELS = null;
+    var line = "model: " + d.model + (d.provider ? "  (" + (d.provider_label || d.provider) + ")" : "");
+    if (d.context_length) line += "  ctx " + Number(d.context_length).toLocaleString();
+    line += d.persisted ? "  [saved to config.yaml]" : "  [this session only]";
+    addMsg("assistant", line + (d.warning ? "\n\n" + d.warning : ""));
+    refreshStats();
+  }).catch(function (e) {
+    addMsg("assistant", "model switch failed: " + e.message);
+  });
+}
+
+async function showModelList(d) {
+  var thread = $("thread");
+  var wrap = document.createElement("div");
+  wrap.className = "msg assistant";
+  var bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.style.padding = "0";
+  bubble.textContent = "Reading models\u2026";
+  wrap.appendChild(bubble);
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+  try {
+    if (!d) {
+      var r = await fetch("/webchat/models", {
+        headers: { "Authorization": "Bearer " + KEY }, cache: "no-store"
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      d = await r.json();
+      MODELS = d;
+    }
+    var box = document.createElement("div");
+    box.className = "caps";
+    box.innerHTML = modelTable(d);
+    bubble.textContent = "";
+    bubble.style.padding = "";
+    bubble.appendChild(box);
+  } catch (err) {
+    // A failed catalog probe must not block a switch: the name can still be typed.
+    bubble.textContent = "Could not load models: " + (err && err.message ? err.message : err) +
+      " \u2014 type /model <name> to switch anyway";
+  }
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function modelTable(d) {
+  function row(k, v) {
+    return '<div class="caprow"><span class="capk">' + k + '</span><span class="capv">' + v + "</span></div>";
+  }
+  var rows = [];
+  rows.push(row("current", esc(d.current || "\u2014") +
+    (d.provider ? "  \u00b7  " + esc(d.provider) : "") +
+    (d.context_length ? "  \u00b7  ctx " + Number(d.context_length).toLocaleString() : "")));
+  if (d.note) rows.push(row("note", esc(d.note)));
+  var ids = d.model_ids || [];
+  var provs = (d.providers || []).filter(function (p) { return p.count; });
+  rows.push(row("available", ids.length + " model" + (ids.length === 1 ? "" : "s") +
+    (provs.length ? "  \u00b7  " + provs.map(function (p) {
+      return esc(p.provider) + " (" + p.count + ")"; }).join(", ") : "")));
+  if (ids.length) {
+    rows.push(row("pick", ids.slice(0, 80).map(function (m) { return esc(m); }).join("\u00b7")));
+  }
+  rows.push(row("usage", esc("/model <name>") + "  \u00b7  " + esc("/model <name> --save") +
+    "  \u00b7  " + esc("/model <name> --provider <slug>")));
+  return rows.join("");
+}
+
 async function showCapabilities() {
   var thread = $("thread");
   var wrap = document.createElement("div");
@@ -1690,7 +1793,9 @@ function renderSlash() {
   // /capabilities is a WEBCHAT command, not a Hermes skill: the table is built from
   // this install's live config, so it is offered alongside the scanned skills.
   var LOCAL = [{ command: "/capabilities", name: "Capabilities",
-                 description: "Table of what this Hermes install can do" }];
+                 description: "Table of what this Hermes install can do" },
+               { command: "/model", name: "Model",
+                 description: "Show or switch the model (/model <name> [--save])" }];
   var all = LOCAL.concat(SKILLS || []);
   var pool = q ? all.filter(function (s) {
     return s.command.slice(1).indexOf(q) === 0 || s.name.toLowerCase().indexOf(q) !== -1;
