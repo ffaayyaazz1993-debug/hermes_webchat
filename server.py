@@ -165,6 +165,14 @@ def _bootstrap_import_path() -> None:
 
 _bootstrap_import_path()
 
+# Pin PyMuPDF in this interpreter so PDF upload extraction resolves to THIS
+# venv (its C extension is absent from the committed foreign-ABI env).
+try:
+    import fitz as _fitz  # noqa: F401
+except Exception as exc:  # noqa: BLE001
+    LOG.debug("PyMuPDF unavailable in this interpreter: %s", exc)
+
+
 from gateway.config import PlatformConfig  # noqa: E402
 from gateway.platforms.api_server import APIServerAdapter  # noqa: E402
 
@@ -260,6 +268,7 @@ class WebChatAdapter(APIServerAdapter):
         routes.append(("GET", "/", self._handle_webchat_ui))
         routes.append(("GET", "/index.html", self._handle_webchat_ui))
         routes.append(("GET", "/favicon.ico", self._handle_favicon))
+        routes.append(("GET", "/js/{filename}", self._handle_webchat_js))
         # Sidebar history + the message-truncation the edit/regenerate controls need.
         # Both delegate to the SAME SessionDB the agent turn writes to, so the UI can
         # never drift from what Hermes actually persisted.
@@ -274,6 +283,9 @@ class WebChatAdapter(APIServerAdapter):
         routes.append((
             "POST", "/webchat/sessions/{session_id}/truncate",
             self._handle_webchat_truncate))
+        routes.append((
+            "POST", "/webchat/sessions/{session_id}/compress",
+            self._handle_webchat_compress))
         routes.append((
             "PATCH", "/webchat/sessions/{session_id}/title",
             self._handle_webchat_title))
@@ -295,6 +307,9 @@ class WebChatAdapter(APIServerAdapter):
         routes.append((
             "POST", "/webchat/model",
             self._handle_webchat_model_switch))
+        routes.append((
+            "POST", "/webchat/upload_pdf",
+            self._handle_webchat_upload_pdf))
         return routes
 
     async def _handle_webchat_models(self, request: "web.Request") -> "web.Response":
@@ -424,6 +439,84 @@ class WebChatAdapter(APIServerAdapter):
             out = await asyncio.to_thread(apply)
         except Exception as exc:  # noqa: BLE001
             LOG.warning("model switch failed: %s", exc)
+            return aio_web.json_response(
+                {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=500)
+        return aio_web.json_response(out, status=200 if out.get("ok") else 400)
+
+    async def _handle_webchat_compress(self, request: "web.Request") -> "web.Response":
+        """POST /webchat/sessions/{id}/compress — force context compression.
+
+        Uses the same ``compress_now`` + ``_compress_context(force=True)`` path
+        the CLI's ``/compress`` uses. The compressed history is persisted back
+        to the session via ``SessionDB.replace_messages``.
+        """
+        from aiohttp import web as aio_web
+
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        session_id = request.match_info["session_id"]
+
+        def _compress() -> dict:
+            db = self._ensure_session_db()
+            if db is None:
+                return {"ok": False, "error": "session DB unavailable"}
+
+            # Build a temporary agent for this session first (needed for token estimates).
+            agent = self._create_agent(session_id=session_id)
+            try:
+                rows = db.get_messages(session_id)
+                history = [m for m in (rows or []) if m.get("role") in ("user", "assistant")]
+                if len(history) < 4:
+                    return {"ok": False, "error": "nothing to compress (need at least 4 messages)"}
+
+                from agent.conversation_compression_manual import (
+                    compress_now, parse_compress_args, estimate_request_tokens,
+                )
+
+                req = parse_compress_args("")
+                result = compress_now(agent, history, req,
+                                      system_message=getattr(agent, "_cached_system_prompt", "") or "",
+                                      task_id=session_id)
+
+                if result.status == "lock_skipped":
+                    return {"ok": False, "error": "compression already in progress (lock held)"}
+
+                if result.status == "nothing_to_do":
+                    return {"ok": False, "error": "nothing to compress"}
+
+                if result.status == "preview":
+                    return {"ok": False, "error": "\n".join(result.lines)}
+
+                # Persist compressed history
+                after = result.after_messages
+                db.replace_messages(session_id, after, archive_dropped=True)
+
+                before_active = len(rows or [])
+                before_active_tokens = estimate_request_tokens(agent, list(rows or []))
+                after_tokens = estimate_request_tokens(agent, list(after or []))
+
+                return {
+                    "ok": True,
+                    "before_messages": before_active,
+                    "after_messages": len(after or []),
+                    "before_tokens": before_active_tokens,
+                    "after_tokens": after_tokens,
+                    "removed": before_active - len(after or []),
+                }
+            finally:
+                # Clean up temp agent
+                if hasattr(agent, 'disconnect'):
+                    try:
+                        agent.disconnect()
+                    except Exception:
+                        pass
+
+        try:
+            out = await asyncio.to_thread(_compress)
+        except Exception as exc:
+            LOG.warning("compress failed for %s: %s", session_id, exc)
             return aio_web.json_response(
                 {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=500)
         return aio_web.json_response(out, status=200 if out.get("ok") else 400)
@@ -695,7 +788,10 @@ class WebChatAdapter(APIServerAdapter):
             # same durable per-turn figure the CLI anchors its bar on
             # (agent.usage_anchor.anchored_context_tokens), and it is correct for a
             # single-call session too (19,311 both ways).
-            ctx_tokens = prompt_sum
+            # When the anchor is absent, do NOT fall back to prompt_sum -- that is the
+            # cumulative total across all turns and will always show an impossible
+            # number (observed: 344M/1.0M). Set 0 so the UI hides the bar.
+            ctx_tokens = 0
             try:
                 import json as _json
 
@@ -958,6 +1054,66 @@ class WebChatAdapter(APIServerAdapter):
             LOG.debug("allowing same-origin webchat requests: %s", ", ".join(origins))
             self._cors_origins = merged
 
+    async def _handle_webchat_upload_pdf(self, request: "web.Request") -> "web.Response":
+        """POST /webchat/upload_pdf -- extract text from a PDF for chat attachment."""
+        from aiohttp import web as aio_web
+        import base64
+
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        try:
+            body = await request.json()
+        except Exception:
+            return aio_web.json_response({"error": "bad json"}, status=400)
+
+        name = str(body.get("filename") or "attachment.pdf")
+        data_b64 = body.get("data")
+        if not data_b64:
+            return aio_web.json_response({"error": "data required"}, status=400)
+        # strip any data: prefix
+        if "," in str(data_b64):
+            data_b64 = str(data_b64).split(",", 1)[1]
+        try:
+            raw = base64.b64decode(data_b64, validate=True)
+        except Exception:
+            return aio_web.json_response({"error": "invalid base64"}, status=400)
+
+        if len(raw) > 10 * 1024 * 1024:
+            return aio_web.json_response({"error": "file too large (max 10MB)"}, status=413)
+
+        def _extract():
+            import pymupdf as fitz  # PyMuPDF (compiled, pre-pinned in this venv)
+            doc = fitz.open(stream=raw, filetype="pdf")
+            if doc.needs_pass:
+                return None, "password-protected PDF not supported"
+            parts = []
+            for page in doc:
+                t = page.get_text()
+                if t.strip():
+                    parts.append(t)
+            text = "\n\n".join(parts)
+            pages = doc.page_count
+            doc.close()
+            limit = 100000
+            if len(text) > limit:
+                text = text[:limit] + "\n\n[... truncated at 100k chars ...]"
+            return text, pages
+
+        try:
+            text, info = await asyncio.to_thread(_extract)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("pdf extract failed: %s", exc)
+            return aio_web.json_response({"error": f"{type(exc).__name__}: {exc}"}, status=500)
+
+        if text is None:
+            return aio_web.json_response({"error": str(info)}, status=400)
+        return aio_web.json_response({
+            "ok": True, "name": name, "text": text,
+            "pages": info, "chars": len(text),
+        })
+
     async def _handle_webchat_ui(self, request: "web.Request") -> "web.Response":
         from aiohttp import web as aio_web
 
@@ -998,14 +1154,16 @@ class WebChatAdapter(APIServerAdapter):
                 # code, and renders all model/tool text via textContent (never innerHTML).
                 "Content-Security-Policy": (
                     "default-src 'none'; "
-                    "script-src 'unsafe-inline'; "
-                    "connect-src 'self'; "
+                    "script-src 'unsafe-inline' 'self'; "
+                    "connect-src 'self' https: wss:; "
                     "style-src 'unsafe-inline'; "
                     "img-src 'self' data:; "
+                    "media-src 'self' blob:; "
                     "form-action 'none'; "
                     "base-uri 'none'; "
                     "frame-ancestors 'none'"
                 ),
+                                "Permissions-Policy": "camera=(), microphone=(self), geolocation=()",
             },
         )
 
@@ -1013,6 +1171,19 @@ class WebChatAdapter(APIServerAdapter):
         from aiohttp import web as aio_web
 
         return aio_web.Response(status=204)
+
+    async def _handle_webchat_js(self, request: "web.Request") -> "web.Response":
+        from aiohttp import web as aio_web
+        from pathlib import Path
+
+        filename = request.match_info["filename"]
+        # Prevent path traversal
+        if ".." in filename or "/" in filename or "\\" in filename:
+            return aio_web.Response(status=403)
+        fpath = HERE / "static" / "js" / filename
+        if not fpath.exists() or not fpath.is_file():
+            return aio_web.Response(status=404)
+        return aio_web.FileResponse(fpath)
 
 
 # --------------------------------------------------------------------------
