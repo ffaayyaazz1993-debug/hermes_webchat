@@ -25,7 +25,7 @@ start_server() {
   fi
   say "  starting ${name} on ${port}"
   ( cd "$dir" && HERMES_DISABLE_LAZY_INSTALLS=1 NO_COLOR=1 \
-      "$HERMES_PY" server.py --port "$port" >"/tmp/${name}.log" 2>&1 & )
+      nohup "$HERMES_PY" server.py --port "$port" >"/tmp/${name}.log" 2>&1 & )
   for _ in $(seq 1 25); do
     [ "$(http "http://127.0.0.1:${port}/")" = "200" ] && { say "  ${name} ready"; return 0; }
     sleep 1
@@ -41,7 +41,7 @@ if [ "$(http "http://127.0.0.1:${KANBAN_PORT}/")" = "200" ]; then
   say "  kanban already up on ${KANBAN_PORT}"
 else
   say "  starting hermes dashboard (kanban) on ${KANBAN_PORT}"
-  ( hermes dashboard --port "$KANBAN_PORT" --no-open >"/tmp/kanban.log" 2>&1 & )
+  ( nohup hermes dashboard --port "$KANBAN_PORT" --no-open >"/tmp/kanban.log" 2>&1 & )
   for _ in $(seq 1 30); do
     [ "$(http "http://127.0.0.1:${KANBAN_PORT}/")" = "200" ] && { say "  kanban ready"; break; }
     sleep 1

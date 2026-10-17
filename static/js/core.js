@@ -15,5 +15,6 @@ var thread = $("thread"), threadInner = $("thread-inner"), input = $("input"),
 
 var sessionId = null, busy = false, controller = null, live = null,
     sessions = [], toastT = null, lastSentUserEl = null;
+var turns = {};         // sessionId -> in-flight turn; see send.js
 var userHistory = [];   // previous user messages, for ghost auto-guess
 var ghostSuggest = null; // current suggestion string (null = none)

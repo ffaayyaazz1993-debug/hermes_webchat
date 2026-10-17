@@ -105,15 +105,16 @@ window.addEventListener("focus", function () {
   if (sessionId) refreshStats();
 });
 
-$("actClose").addEventListener("click", function () { setActPanel(false); });
-function setActPanel(on) {
-  var p = $("actpanel");
-  if (!p) return;
-  p.hidden = !on;
-  try { localStorage.setItem("hermes_act", on ? "1" : "0"); } catch (e) {}
-  if (on) renderAct();
-}
-$("actBtn").addEventListener("click", function () { setActPanel($("actpanel").hidden); });
+$("saveBtn").addEventListener("click", function () {
+  if (!sessionId) { toast("No session to save"); return; }
+  apiJSON("/webchat/sessions/" + encodeURIComponent(sessionId) + "/save", { method: "POST" })
+    .then(function (d) {
+      if (d.already) { toast("Already in web history"); }
+      else if (d.saved) { toast("Saved to web history"); }
+      refreshSidebar();
+    })
+    .catch(function (e) { toast("Save failed: " + e.message); });
+});
 
 $("newChat").addEventListener("click", newChat);
 $("menuBtn").addEventListener("click", function () {

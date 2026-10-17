@@ -3,3 +3,6 @@ __pycache__/
 *.log
 config.json
 .chrome-profile/
+
+# Hermes scratch dirs
+.hermes-tmp.*

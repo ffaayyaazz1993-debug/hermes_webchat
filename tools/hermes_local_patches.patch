@@ -1,0 +1,126 @@
+diff --git a/gateway/platforms/api_server.py b/gateway/platforms/api_server.py
+index 8045b003177..20e4b320f37 100644
+--- a/gateway/platforms/api_server.py
++++ b/gateway/platforms/api_server.py
+@@ -3653,7 +3653,32 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
+                     if event_type == "tool.completed" and kwargs.get("is_error")
+                     else event_type
+                 )
+-                events.enqueue(event_name, {"message_id": message_id, "tool_name": tool_name, "preview": preview, "args": args})
++                payload = {"message_id": message_id, "tool_name": tool_name,
++                           "preview": preview, "args": args}
++                if event_type != "tool.started":
++                    # tool_executor fires tool.completed with duration/is_error/result, but
++                    # preview and args are both None by then -- dropping them here left a
++                    # client with no way to show what a tool actually returned. Carry the
++                    # result (bounded) so a finished call can render inline like the CLI.
++                    result = kwargs.get("result")
++                    if result is not None:
++                        if isinstance(result, str):
++                            text = result
++                        else:
++                            try:
++                                text = json.dumps(result)
++                            except (TypeError, ValueError):
++                                text = str(result)
++                        limit = 200_000
++                        if len(text) > limit:
++                            text = text[:limit] + "\n... (truncated, original %d chars)" % len(text)
++                        payload["result"] = text
++                    duration = kwargs.get("duration")
++                    if isinstance(duration, (int, float)):
++                        payload["duration"] = float(duration)
++                    if kwargs.get("is_error") is not None:
++                        payload["is_error"] = bool(kwargs.get("is_error"))
++                events.enqueue(event_name, payload)
+ 
+         def _commentary(text: str, *, already_streamed: bool = False) -> None:
+             # Mid-turn assistant commentary (Codex ``phase="commentary"``, text beside tool calls)
+diff --git a/tools/terminal_tool.py b/tools/terminal_tool.py
+index 21b849aa5d9..bd6f2f1a2c1 100644
+--- a/tools/terminal_tool.py
++++ b/tools/terminal_tool.py
+@@ -74,6 +74,12 @@ def _safe_parse_import_env(name: str, default: Any, converter, type_label: str):
+ 
+ # Hard cap on foreground timeout; override via TERMINAL_MAX_FOREGROUND_TIMEOUT env var.
+ FOREGROUND_MAX_TIMEOUT = _safe_parse_import_env("TERMINAL_MAX_FOREGROUND_TIMEOUT", 600, int, "integer")
++# A foreground call that asks to wait longer than this is a long job: it is started as a tracked
++# background process instead of blocking the turn blind, so a heartbeat can report progress and
++# the result stays pollable. Override via TERMINAL_LONG_COMMAND_THRESHOLD.
++LONG_COMMAND_THRESHOLD = _safe_parse_import_env("TERMINAL_LONG_COMMAND_THRESHOLD", 300, int, "integer")
++# Seconds between progress pings for a promoted long job. Override via TERMINAL_PROMOTED_HEARTBEAT.
++PROMOTED_HEARTBEAT_SECONDS = _safe_parse_import_env("TERMINAL_PROMOTED_HEARTBEAT", 120, int, "integer")
+ 
+ # Disk usage warning threshold (in GB)
+ DISK_USAGE_WARNING_THRESHOLD_GB = _safe_parse_import_env("TERMINAL_DISK_WARNING_GB", 500.0, float, "number")
+@@ -1062,10 +1068,10 @@ class _ExecPlan:
+ 
+ 
+ _PROMOTED_NOTE = (
+-    "Requested foreground timeout {requested}s exceeds the {cap}s cap, so this command was started as a "
+-    "tracked background process with notify_on_complete=true instead of being refused. Do NOT re-run it. "
+-    "Its completion (exit code + output tail) arrives as a notification; poll with "
+-    "process(action=\"poll\", session_id=...) if you need it sooner."
++    "Requested foreground timeout {requested}s exceeds the {cap}s long-command threshold, so this command was "
++    "started as a tracked background process instead of blocking the turn. Do NOT re-run it. A progress ping "
++    "(still running + output since the last one) arrives every {heartbeat}s and its completion (exit code + "
++    "output tail) arrives as a notification; poll with process(action=\"poll\", session_id=...) for it sooner."
+ )
+ 
+ 
+@@ -1144,7 +1150,10 @@ def _plan_execution(
+         guidance = _foreground_background_guidance(command)
+         if guidance:
+             raise _Rejected(_error_json(guidance, status="error"))
+-        if timeout and timeout > FOREGROUND_MAX_TIMEOUT:
++        # Any explicit wait past the long-command threshold is promoted, not just one past the
++        # hard foreground cap: the caller has declared it expects to wait, so a progress ping is
++        # worth more than a blind block. See LONG_COMMAND_THRESHOLD.
++        if timeout and timeout > LONG_COMMAND_THRESHOLD:
+             promoted = timeout
+ 
+     return _ExecPlan(
+@@ -1155,9 +1164,9 @@ def _plan_execution(
+ 
+ 
+ _PROMOTED_NOTE_POLL_ONLY = (
+-    "Requested foreground timeout {requested}s exceeds the {cap}s cap, so this command was started as a "
+-    "tracked background process instead of being refused. Do NOT re-run it. This session cannot receive "
+-    "completion notifications, so poll it with process(action=\"poll\", session_id=...) until it exits."
++    "Requested foreground timeout {requested}s exceeds the {cap}s long-command threshold, so this command was "
++    "started as a tracked background process instead of blocking the turn. Do NOT re-run it. This session "
++    "cannot receive completion notifications, so poll it with process(action=\"poll\", session_id=...) until it exits."
+ )
+ 
+ 
+@@ -1172,7 +1181,8 @@ def _with_promoted_note(result_json: str, requested_timeout: int) -> str:
+     if not isinstance(data, dict) or data.get("error"):
+         return result_json
+     template = _PROMOTED_NOTE if data.get("notify_on_complete") else _PROMOTED_NOTE_POLL_ONLY
+-    data["promoted_from_foreground"] = template.format(requested=requested_timeout, cap=FOREGROUND_MAX_TIMEOUT)
++    data["promoted_from_foreground"] = template.format(
++        requested=requested_timeout, cap=LONG_COMMAND_THRESHOLD, heartbeat=PROMOTED_HEARTBEAT_SECONDS)
+     return json.dumps(data, ensure_ascii=False)
+ 
+ 
+@@ -1450,6 +1460,11 @@ def terminal_tool(
+             # Promotion implies notify_on_complete; watch_patterns is a background-only flag the
+             # caller could not have meant for a foreground call, and the two are exclusive anyway.
+             background, notify_on_complete, watch_patterns = True, True, None
++            # A promoted job is one the caller expected to wait a long time for: arm the progress
++            # ping so it checks in by itself instead of the caller polling blind. `heartbeat` is a
++            # background-only arg and was zeroed for this foreground call, so it is always unset here.
++            if not heartbeat:
++                heartbeat = PROMOTED_HEARTBEAT_SECONDS
+         if background:
+             result = spawn_background_process(
+                 command=command, env=env, env_type=env_type, effective_task_id=effective_task_id,
+@@ -1511,7 +1526,7 @@ TERMINAL_SCHEMA = {
+             },
+             "timeout": {
+                 "type": "integer",
+-                "description": f"Max seconds (default 180, foreground max {FOREGROUND_MAX_TIMEOUT}). Finishing early returns at once, so set it generously. Above {FOREGROUND_MAX_TIMEOUT}s the command runs as a tracked background process with notify_on_complete=true (the result says so; do not re-run it).",
++                "description": f"Max seconds (defaults to terminal.timeout from config). Finishing early returns at once, so set it generously. Above {LONG_COMMAND_THRESHOLD}s the command runs as a tracked background process with a progress ping every {PROMOTED_HEARTBEAT_SECONDS}s and notify_on_complete=true (the result says so; do not re-run it).",
+                 "minimum": 1
+             },
+             "workdir": {

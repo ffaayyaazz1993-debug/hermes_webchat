@@ -39,23 +39,28 @@ function buildWelcome() {
 }
 
 function newChat() {
-  if (busy) { toast("Wait for the current reply, or press Esc to stop it."); return; }
-  finishLive();
+  // Switching away mid-turn is allowed: a running turn keeps streaming on its own
+  // session and lands there (see send.js). Nothing is aborted and nothing is lost.
   sessionId = null;
   try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+  try { history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) {}
   threadInner.textContent = "";
   threadInner.appendChild(buildWelcome());
   convTitle.textContent = "New chat";
+  var saveBtn = document.getElementById("saveBtn");
+  if (saveBtn) saveBtn.style.display = "none";
   lastTurn = null;
   renderStats(null);   // clear: the old chat's counters must not linger
   hideThinking();
   setStatus("ready", "ok");
+  syncTurnAliases();   // no turn belongs to this fresh chat
   input.focus();
-  newSession().then(refreshSidebar, function () {});
+  newSession().then(function () { syncTurnAliases(); refreshSidebar(); }, function () {});
 }
 
 function loadSession(id) {
-  if (busy) { toast("Wait for the current reply, or press Esc to stop it."); return; }
+  // Switching away mid-turn is allowed: a running turn keeps streaming on its own
+  // session and lands there (see send.js). Nothing is aborted.
   // Show the stored name in the header immediately; refreshSidebar may not have run yet.
   var known = sessions.filter(function (x) { return x.id === id; })[0];
   if (known) setTitleBar(known.title);
@@ -63,6 +68,7 @@ function loadSession(id) {
   return apiJSON("/api/sessions/" + encodeURIComponent(id) + "/messages").then(function (d) {
     sessionId = id;
     try { sessionStorage.setItem(SESSION_KEY, id); } catch (e) {}
+    try { history.replaceState(null, "", window.location.pathname + window.location.search + "#session-" + encodeURIComponent(id)); } catch (e) {}
     var msgs = d.data || d.messages || [];
     userHistory = msgs.filter(function (m) { return m.role === "user" && m.content; })
       .map(function (m) { return m.content; }).slice(-200);
@@ -79,10 +85,29 @@ function loadSession(id) {
         addControls(r2.wrap, "assistant");
       }
     });
+    // A turn for this chat may still be streaming in the background. Its bubble was
+    // kept in memory while the user was elsewhere -- put it back, along with any
+    // notes it raised in the meantime.
+    var t = turnFor(id);
+    if (t) {
+      (t.notes || []).forEach(function (n) { addMsg(n.role, n.text); });
+      t.notes = [];
+      if (t.busy && t.live && t.live.wrap) {
+        threadInner.appendChild(t.live.wrap);
+        updateLive(t);
+      }
+    }
     if (!threadInner.querySelector(".msg")) threadInner.appendChild(buildWelcome());
     var s = sessions.filter(function (x) { return x.id === id; })[0];
     convTitle.textContent = (s && s.title) || "Chat";
-    setStatus("ready", "ok");
+    // Show save button for non-api_server sessions (CLI, cron, etc.)
+    // If session not in sidebar (s is undefined), it's an external session → show button.
+    var saveBtn = document.getElementById("saveBtn");
+    if (saveBtn) {
+        var isExternal = !s || (s.source && s.source !== "api_server");
+        saveBtn.style.display = isExternal ? "" : "none";
+    }
+    syncTurnAliases();   // busy / controller / live now describe THIS chat
     scrollDown(true);
     markActive();
     // Stats AFTER sessionId is assigned. Calling it earlier dropped the response on
@@ -93,6 +118,7 @@ function loadSession(id) {
   }, function (e) {
     toast("Could not open that chat: " + e.message);
     sessionId = null;
+    syncTurnAliases();
   });
 }
 
@@ -144,7 +170,16 @@ function refreshSidebar() {
           refreshSidebar();
         }, function (err) { toast("Delete failed: " + err.message); });
       });
-      item.appendChild(t); item.appendChild(pen); item.appendChild(x);
+      item.appendChild(t);
+      // A chat with a turn still running gets a dot, so it is obvious which one is
+      // working while the user reads another.
+      if (turnFor(s.id)) {
+        var sp = document.createElement("span");
+        sp.className = "sb-spin";
+        sp.title = "Still generating\u2026";
+        item.appendChild(sp);
+      }
+      item.appendChild(pen); item.appendChild(x);
       item.addEventListener("click", function () { loadSession(s.id); });
       item.addEventListener("dblclick", function () { startRename(item, s); });
       sbList.appendChild(item);

@@ -6,6 +6,7 @@ function autosizeEl(ta) {
 input.addEventListener("input", function () {
   autosize();
   updateGhost();
+  updateSendBtn();   // with text while streaming, the button becomes "steer"
   if (SKILLS === null) { loadSkills().then(renderSlash); return; }
   renderSlash();
 });
@@ -95,10 +96,10 @@ input.addEventListener("keydown", function (e) {
   }
   if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    if (!busy) send(input.value);
+    send(input.value);        // send() steers when a turn is already streaming
   } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
-    if (!busy) send(input.value);
+    send(input.value);
   } else if (e.key === "Escape" && busy && controller) {
     e.preventDefault();
     controller.abort();
@@ -109,5 +110,7 @@ input.addEventListener("keydown", function (e) {
 input.addEventListener("blur", function () { setTimeout(closeSlash, 120); });
 sendBtn.addEventListener("click", function () {
   closeSlash();
-  if (busy && controller) controller.abort(); else send(input.value);
+  // Empty composer while streaming = stop; anything else = send (which steers if busy).
+  if (busy && !input.value.trim() && controller) controller.abort();
+  else send(input.value);
 });

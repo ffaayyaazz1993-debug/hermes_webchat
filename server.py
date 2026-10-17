@@ -290,6 +290,9 @@ class WebChatAdapter(APIServerAdapter):
             "PATCH", "/webchat/sessions/{session_id}/title",
             self._handle_webchat_title))
         routes.append((
+            "POST", "/webchat/sessions/{session_id}/save",
+            self._handle_webchat_save))
+        routes.append((
             "GET", "/webchat/sessions/{session_id}/stats",
             self._handle_webchat_stats))
         routes.append((
@@ -361,6 +364,16 @@ class WebChatAdapter(APIServerAdapter):
                     names = list(list_provider_models(slug)) if list_provider_models else []
                 except Exception:
                     names = []
+                if not names:
+                    # Provider not in models.dev (e.g. nous) — fall back to config.yaml default
+                    prov_cfg = (cfg.get("providers") or {}).get(slug) or {}
+                    def_model = prov_cfg.get("default") or ""
+                    if not def_model:
+                        # Also check top-level model config
+                        if (cfg.get("model") or {}).get("provider") == slug:
+                            def_model = (cfg.get("model") or {}).get("default") or ""
+                    if def_model:
+                        names = [def_model]
                 out["providers"].append({"provider": slug, "count": len(names)})
                 for n in names:
                     out["models"].append({"id": str(n), "provider": slug})
@@ -436,7 +449,9 @@ class WebChatAdapter(APIServerAdapter):
             }
 
         try:
-            out = await asyncio.to_thread(apply)
+            out = await asyncio.wait_for(asyncio.to_thread(apply), timeout=15.0)
+        except asyncio.TimeoutError:
+            return aio_web.json_response({"ok": False, "error": "model switch timed out (provider catalog probe hung)"}, status=504)
         except Exception as exc:  # noqa: BLE001
             LOG.warning("model switch failed: %s", exc)
             return aio_web.json_response(
@@ -458,7 +473,14 @@ class WebChatAdapter(APIServerAdapter):
 
         session_id = request.match_info["session_id"]
 
-        def _compress() -> dict:
+        # Parse compress args from request body
+        try:
+            body = await request.json()
+            args_str = body.get("args", "") if isinstance(body, dict) else ""
+        except Exception:
+            args_str = ""
+
+        def _compress(args_str: str) -> dict:
             db = self._ensure_session_db()
             if db is None:
                 return {"ok": False, "error": "session DB unavailable"}
@@ -466,6 +488,20 @@ class WebChatAdapter(APIServerAdapter):
             # Build a temporary agent for this session first (needed for token estimates).
             agent = self._create_agent(session_id=session_id)
             try:
+                # Initialize context compressor with session state (match CLI behavior)
+                if hasattr(agent, 'context_compressor') and agent.context_compressor:
+                    try:
+                        from hermes_constants import get_hermes_home
+                        agent.context_compressor.bind_session_state(db, session_id)
+                        agent.context_compressor.on_session_start(
+                            session_id,
+                            hermes_home=str(get_hermes_home()),
+                            platform='api_server',
+                            model=getattr(agent, 'model', ''),
+                            context_length=getattr(agent.context_compressor, 'context_length', 0),
+                        )
+                    except Exception as ce_err:
+                        LOG.debug("Compressor init for %s: %s", session_id, ce_err)
                 rows = db.get_messages(session_id)
                 history = [m for m in (rows or []) if m.get("role") in ("user", "assistant")]
                 if len(history) < 4:
@@ -475,7 +511,7 @@ class WebChatAdapter(APIServerAdapter):
                     compress_now, parse_compress_args, estimate_request_tokens,
                 )
 
-                req = parse_compress_args("")
+                req = parse_compress_args(args_str)
                 result = compress_now(agent, history, req,
                                       system_message=getattr(agent, "_cached_system_prompt", "") or "",
                                       task_id=session_id)
@@ -514,7 +550,7 @@ class WebChatAdapter(APIServerAdapter):
                         pass
 
         try:
-            out = await asyncio.to_thread(_compress)
+            out = await asyncio.to_thread(_compress, args_str)
         except Exception as exc:
             LOG.warning("compress failed for %s: %s", session_id, exc)
             return aio_web.json_response(
@@ -879,7 +915,7 @@ class WebChatAdapter(APIServerAdapter):
 
         def _load() -> list:
             return db.list_sessions_rich(
-                source="api_server", limit=200, offset=0, include_children=False,
+                source="api_server", limit=200, offset=0, include_children=True,
                 order_by_last_active=True, include_pinned=True,
             )
 
@@ -974,6 +1010,46 @@ class WebChatAdapter(APIServerAdapter):
             return aio_web.json_response(
                 {"error": {"message": str(exc), "code": "title_failed"}}, status=500)
         return aio_web.json_response({"session_id": session_id, **result})
+
+    async def _handle_webchat_save(self, request: "web.Request") -> "web.Response":
+        """POST /webchat/sessions/{id}/save — register a CLI/external session into web history.
+
+        Changes the session's source to 'api_server' so it appears in the sidebar
+        alongside native web chats. Idempotent: re-saving an already-api_server
+        session is a no-op.
+        """
+        from aiohttp import web as aio_web
+
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        session_id = request.match_info["session_id"]
+        db = await self._ensure_session_db_async()
+        if db is None:
+            return self._session_db_unavailable()
+
+        def _save() -> dict:
+            row = db.get_session(session_id)
+            if row is None:
+                return {"error": "not_found"}
+            if row.get("source") == "api_server":
+                return {"saved": False, "already": True, "source": "api_server"}
+            db._write_sql(
+                "UPDATE sessions SET source = 'api_server' WHERE id = ?",
+                (session_id,),
+            )
+            return {"saved": True, "source": "api_server"}
+
+        try:
+            result = await asyncio.to_thread(_save)
+        except Exception as exc:
+            LOG.warning("save failed for %s: %s", session_id, exc)
+            return aio_web.json_response(
+                {"error": {"message": str(exc), "code": "save_failed"}}, status=500)
+        if "error" in result:
+            return aio_web.json_response(
+                {"error": {"message": "session not found", "code": "not_found"}}, status=404)
+        return aio_web.json_response(result)
 
     async def _handle_webchat_truncate(self, request: "web.Request") -> "web.Response":
         """POST /webchat/sessions/{id}/truncate — drop every message after an id.
