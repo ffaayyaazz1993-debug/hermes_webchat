@@ -133,7 +133,15 @@ function refreshSidebar() {
   return apiJSON("/webchat/sidebar").then(function (d) {
     sessions = d.sessions || [];
     sbList.textContent = "";
-    var mine = sessions.filter(function (s) { return s.message_count > 0 || s.id === sessionId; });
+    // Newest first, always. The sidebar endpoint does not guarantee order, and the
+    // header loop below only emits a header when the label CHANGES -- so an unsorted
+    // array printed Today / Previous 7 days / Yesterday / Previous 7 days / Today...
+    // Sorting here is what makes each date header appear exactly once, in order.
+    var mine = sessions.filter(function (s) {
+      return s.message_count > 0 || s.id === sessionId;
+    }).sort(function (a, b) {
+      return (Number(b.last_active) || 0) - (Number(a.last_active) || 0);
+    });
     if (!mine.length) {
       var e = document.createElement("div");
       e.className = "sb-empty"; e.textContent = "No conversations yet.";

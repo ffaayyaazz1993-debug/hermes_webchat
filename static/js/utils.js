@@ -12,12 +12,20 @@ function fmtTime(ts) {
 function fmtDay(ts) {
   if (!ts) return "Earlier";
   var d = new Date(ts * 1000), now = new Date();
-  var days = Math.floor((now - d) / 86400000);
+  // Compare calendar days, not elapsed 24h windows. The raw (now - d)/86400000
+  // floor labelled a chat from 21:00 two nights ago as "Yesterday" (Oct 16 21:03
+  // read as Yesterday on Oct 18), so the header did not match the real date.
+  var midnight = function (x) {
+    return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  };
+  var days = Math.round((midnight(now) - midnight(d)) / 86400000);
   if (days <= 0) return "Today";
   if (days === 1) return "Yesterday";
-  if (days < 7) return "Previous 7 days";
-  if (days < 30) return "Previous 30 days";
-  return d.toLocaleDateString([], { month: "long", year: "numeric" });
+  // Older than yesterday: one header per real date, so the list reads
+  // Today, Yesterday, then each previous date in turn (newest first).
+  var opts = { weekday: "short", day: "numeric", month: "short" };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString([], opts);
 }
 function copyText(t) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
