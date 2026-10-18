@@ -313,7 +313,95 @@ class WebChatAdapter(APIServerAdapter):
         routes.append((
             "POST", "/webchat/upload_pdf",
             self._handle_webchat_upload_pdf))
+        # Server->browser push channel. One long-lived SSE stream per tab, so the
+        # UI can report progress on its own instead of being asked for a status.
+        routes.append(("GET", "/events", self._handle_webchat_events))
+        # Dev-only probe for the push channel, gated by env so it cannot fire in
+        # normal use: POST /events/test {"event": "...", "data": {...}}.
+        routes.append(("POST", "/events/test", self._handle_webchat_events_test))
+        # Manual sidebar order + pins (WebChat-owned sidecar, see sidebar_order.py).
+        routes.append(("POST", "/webchat/sidebar/order", self._handle_webchat_sidebar_order))
         return routes
+
+    async def _handle_webchat_events_test(self, request: "web.Request") -> "web.Response":
+        """POST /events/test — dev probe for the push channel (env-gated).
+
+        Exists so the channel can be verified deterministically without waiting on
+        a real long job. Refuses unless WEBCHAT_DEBUG_EVENTS=1.
+        """
+        from aiohttp import web as aio_web
+
+        from events import BUS, TRACKER
+
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        if os.environ.get("WEBCHAT_DEBUG_EVENTS") != "1":
+            return aio_web.json_response(
+                {"error": {"message": "disabled; set WEBCHAT_DEBUG_EVENTS=1"}}, status=403)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        event = str(body.get("event") or "progress.note")
+        data = body.get("data") if isinstance(body.get("data"), dict) else {}
+        if body.get("track"):   # also exercise the tracker + its heartbeat ticker
+            TRACKER.start(str(body["track"]), session_id=str(body.get("session_id") or ""),
+                          label=str(data.get("label") or "tracked work"),
+                          kind=str(data.get("kind") or "job"))
+        BUS.publish(event, data)
+        return aio_web.json_response({"published": event, "subscribers": BUS.subscriber_count()})
+
+    async def _handle_webchat_events(self, request: "web.Request") -> "web.Response":
+        """GET /events — the live push channel (server-sent events).
+
+        One stream per tab. Frames carry monotonic ids, so a tab that reconnects
+        with Last-Event-ID gets the frames it missed replayed from the ring
+        buffer; a dropped frame shows up as a gap in the ids rather than as
+        silence. Producers publish from agent threads via events.BUS.publish().
+        """
+        from aiohttp import web as aio_web
+
+        from events import BUS, TRACKER, sse_frame
+
+        auth_err = self._check_auth(request)  # inherited gate: bearer API_SERVER_KEY
+        if auth_err:
+            return auth_err
+
+        loop = asyncio.get_running_loop()
+        BUS.bind_loop(loop)
+        TRACKER.start_ticker(loop)   # idempotent; heartbeats running work
+
+        resp = aio_web.StreamResponse(headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        })
+        await resp.prepare(request)
+        q = BUS.subscribe()
+        LOG.info("events: tab subscribed (%d open)", BUS.subscriber_count())
+        try:
+            last = request.headers.get("Last-Event-ID") or ""
+            if last.isdigit():
+                for frame in BUS.replay_since(int(last)):
+                    await resp.write(sse_frame(frame))
+            await resp.write(b": connected\n\n")
+            while True:
+                try:
+                    frame = await asyncio.wait_for(q.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    # Comment heartbeat: keeps proxies and idle timers from closing
+                    # an otherwise silent stream.
+                    await resp.write(b": ping\n\n")
+                    continue
+                await resp.write(sse_frame(frame))
+        except (asyncio.CancelledError, ConnectionResetError):
+            pass
+        finally:
+            BUS.unsubscribe(q)
+            LOG.info("events: tab unsubscribed (%d open)", BUS.subscriber_count())
+        return resp
 
     async def _handle_webchat_models(self, request: "web.Request") -> "web.Response":
         """GET /webchat/models -- the model list plus the current selection.
@@ -898,6 +986,52 @@ class WebChatAdapter(APIServerAdapter):
         return aio_web.json_response(data)
 
     # -- sidebar ------------------------------------------------------------
+    async def _handle_webchat_sidebar_order(self, request: "web.Request") -> "web.Response":
+        """POST /webchat/sidebar/order — persist a drag order and/or pin state.
+
+        Body (all optional):
+          {"order": [sid, ...],          # full visible list top-to-bottom, pinned excluded
+           "pinned": [sid, ...],         # explicit pin block, top first
+           "pin": {"id": sid, "value": true},   # toggle one row
+           "reset": true}                # back to automatic recency ordering
+
+        Writes only the WebChat's own sidecar file, never Hermes' sessions table.
+        """
+        from aiohttp import web as aio_web
+
+        import sidebar_order
+
+        auth_err = self._check_auth(request)  # this route mutates UI state
+        if auth_err:
+            return auth_err
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        def _apply() -> dict:
+            if body.get("reset"):
+                return sidebar_order.clear()
+            if isinstance(body.get("pin"), dict):
+                pin = body["pin"]
+                return sidebar_order.set_pinned(str(pin.get("id") or ""), bool(pin.get("value")))
+            order = body.get("order") if isinstance(body.get("order"), list) else None
+            pinned = body.get("pinned") if isinstance(body.get("pinned"), list) else None
+            if order is None and pinned is None:
+                return sidebar_order.snapshot()
+            return sidebar_order.set_order(order or [], pinned)
+
+        try:
+            data = await asyncio.to_thread(_apply)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("sidebar order write failed: %s", exc)
+            return aio_web.json_response(
+                {"error": {"message": str(exc), "code": "order_write_failed"}}, status=500)
+        return aio_web.json_response({"ok": True, "rank": len(data.get("rank") or {}),
+                                      "pinned": len(data.get("pinned") or [])})
+
     async def _handle_webchat_sidebar(self, request: "web.Request") -> "web.Response":
         """GET /webchat/sidebar — this web UI's conversations, newest first.
 
@@ -940,7 +1074,17 @@ class WebChatAdapter(APIServerAdapter):
                 "last_active": row.get("last_active") or row.get("started_at") or 0,
                 "ended_at": row.get("ended_at"),
             })
-        return aio_web.json_response({"sessions": sessions})
+        # Manual drag order + pins live in the WebChat's own sidecar (no Hermes
+        # schema change, so `hermes update` cannot undo them). Decorate rather
+        # than re-sort here: the client owns presentation order, and it needs the
+        # raw fields to do the drag maths.
+        from sidebar_order import decorate, has_manual_order
+
+        sessions = decorate(sessions)
+        return aio_web.json_response({
+            "sessions": sessions,
+            "manual_order": has_manual_order(),
+        })
 
     async def _handle_webchat_title(self, request: "web.Request") -> "web.Response":
         """PATCH /webchat/sessions/{id}/title — name a conversation.

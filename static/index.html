@@ -127,7 +127,7 @@ body.sidebar-collapsed #sidebar { margin-left: calc(-1 * var(--sidebar-w)); }
    screen). The border stays on the outer bar so it still spans the full width. */
 #topbar-inner {
   display: flex; align-items: center; gap: 10px;
-  width: 100%; max-width: 780px; margin: 0 auto; padding: 10px 18px;
+  width: 100%; max-width: 780px; margin: 0; padding: 10px 18px;
   min-height: 52px;
 }
 #topbar .title { font-weight: 600; font-size: 15px; overflow: hidden;
@@ -139,7 +139,7 @@ body.sidebar-collapsed #sidebar { margin-left: calc(-1 * var(--sidebar-w)); }
 @keyframes pulse { 50% { opacity: .25; } }
 
 #thread { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
-#thread-inner { max-width: 780px; margin: 0 auto; padding: 26px 18px 12px; }
+#thread-inner { max-width: 780px; margin: 0; padding: 26px 18px 12px; }
 
 /* empty state */
 #welcome { text-align: center; padding: 8vh 12px 20px; }
@@ -207,6 +207,36 @@ html[data-theme="light"] .bubble pre { background: #f6f6f6; }
 .tool-detail { border-top: 1px solid var(--line-soft); background: var(--bg);
   padding: 7px 9px 9px; }
 .tool-detail[hidden] { display: none; }
+
+/* Subagent progress: the child agent's own tool calls, indented under the
+   delegation row, so delegate_task is observable while the children run. */
+.tool-line.subagent .tool-name { color: var(--accent); }
+.sub-kids { border-top: 1px solid var(--line-soft); padding: 3px 0 4px; }
+.sub-kids[hidden] { display: none; }
+.sub-tool { display: flex; gap: 7px; align-items: baseline;
+  padding: 2px 10px 2px 22px; font-size: 11.5px; color: var(--fg-dim); }
+.sub-glyph { flex: 0 0 auto; color: var(--muted); }
+.sub-name { flex: 0 0 auto; font-weight: 600; }
+.sub-prev { flex: 1 1 auto; min-width: 0; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-prog { padding: 2px 10px 2px 22px; font-size: 11px; color: var(--muted); }
+
+/* Live progress rows: the server pushing its own status into the conversation,
+   so nothing has to be asked for. Distinct from a tool row on purpose -- it is
+   not part of the turn and never enters the prompt. */
+.tool-line.progress { border-style: dashed; }
+.tool-line.progress .tool-name { color: var(--fg-dim); font-weight: 500; }
+.tool-line.progress.running .tool-glyph { color: var(--accent); animation: pulse 1s infinite; }
+.tool-line.progress.ok .tool-glyph { color: #4ade80; }
+.tool-line.progress.err .tool-glyph { color: #f87171; }
+
+/* Sidebar drag-to-reorder + pins. The drop indicator is an inset bar rather than
+   a gap so the list does not jump around while dragging. */
+.sb-item.dragging { opacity: .45; }
+.sb-item.drop-above { box-shadow: inset 0 2px 0 var(--accent); }
+.sb-item.drop-below { box-shadow: inset 0 -2px 0 var(--accent); }
+.sb-item.pinned .t { font-weight: 600; }
+.sb-item .x.pin.on { color: var(--accent); opacity: 1; }
 .tool-sec + .tool-sec { margin-top: 8px; }
 .tool-lbl { color: var(--muted); font-size: 10px; text-transform: uppercase;
   letter-spacing: .06em; margin-bottom: 3px; }
@@ -330,7 +360,7 @@ table.cap td.n { color: var(--muted); font-weight: 400; font-size: 11.5px; word-
 
 /* ---------- composer ---------- */
 #composer-wrap { border-top: 1px solid var(--line-soft); background: var(--bg); padding: 12px 14px 16px; }
-#composer { max-width: 780px; margin: 0 auto; }
+#composer { max-width: 780px; margin: 0; }
 #composer-box {
   display: flex; align-items: flex-end; gap: 8px; background: var(--panel-2);
   border: 1px solid var(--line); border-radius: 18px; padding: 8px 8px 8px 14px;
@@ -360,7 +390,7 @@ html[data-theme="light"] #composer-box:focus-within { border-color: #b9b9b9; }
 }
 #send:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
 #send.stop { background: var(--fg); color: var(--bg); }
-#hint { max-width: 780px; margin: 8px auto 0; font-size: 11.5px; color: var(--muted); text-align: center; }
+#hint { max-width: 780px; margin: 8px 0 0; font-size: 11.5px; color: var(--muted); text-align: center; }
 
 /* ---------- image attach ---------- */
 #attach-btn {
@@ -547,6 +577,7 @@ html[data-theme="light"] #composer-box:focus-within { border-color: #b9b9b9; }
   <script src="/js/mic.js"></script>
   <script src="/js/compress.js"></script>
   <script src="/js/model.js"></script>
+  <script src="/js/live.js"></script>
   <script src="/js/boot.js"></script>
 </body>
 </html>

@@ -6,3 +6,5 @@ config.json
 
 # Hermes scratch dirs
 .hermes-tmp.*
+*.bak
+state/

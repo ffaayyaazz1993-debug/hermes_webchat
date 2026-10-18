@@ -245,6 +245,22 @@ function runTurn(text, images, pdfs) {
                            pl.duration, pl.result || pl.result_preview, pl.preview);
           if (on) setThinking("thinking");
         }
+        else if (name === "subagent.start") {
+          addSubagentLine(turn, pl);
+          if (on) setThinking("tool", "subagent");
+        }
+        else if (name === "subagent.tool") {
+          addSubagentTool(turn, pl);
+          if (on) setThinking("tool", pl.tool || "subagent");
+        }
+        else if (name === "subagent.progress") {
+          subagentProgress(turn, pl);
+          if (on) setThinking("tool", "subagent");
+        }
+        else if (name === "subagent.complete") {
+          completeSubagentLine(turn, pl);
+          if (on) setThinking("thinking");
+        }
         else if (name === "assistant.completed") {
           if (pl.content && turn.live && !turn.live.text) {
             turn.live.text = pl.content;

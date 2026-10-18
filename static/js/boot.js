@@ -42,6 +42,7 @@
   }).then(function () {
     setStatus("ready", "ok");
     input.focus();
+    liveStart();   // open the push channel: progress reports itself from here on
   }, function (e) {
     setStatus("offline", "err");
     addMsg("error", "Cannot reach the Hermes server: " + ((e && e.message) || e));

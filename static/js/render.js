@@ -188,6 +188,119 @@ function completeToolLine(turn, name, ok, duration, resultPreview, preview) {
   return null;
 }
 
+// ── Subagent progress ───────────────────────────────────────────────────────
+// A delegate_task spawns child agents. The child's own tool calls arrive as
+// subagent.tool (one per child tool.started) and subagent.progress (a batch
+// summary every few tools). Render them as indented child lines under the
+// delegation, so a subagent's work is visible while it runs instead of the
+// parent showing one silent delegate_task row until the child returns.
+function _subKey(ev) {
+  if (ev.subagent_id) return String(ev.subagent_id);
+  if (ev.task_index != null) return "idx" + ev.task_index;
+  return "0";
+}
+
+function _subLabel(ev) {
+  var n = ev.task_count ? "/" + ev.task_count : "";
+  var i = (ev.task_index != null) ? (ev.task_index + 1) : "?";
+  return "subagent " + i + n;
+}
+
+function addSubagentLine(turn, ev) {
+  var lv = turn ? turn.live : live;
+  if (!lv) return null;
+  if (!lv.subs) lv.subs = {};
+  var key = _subKey(ev);
+  if (lv.subs[key]) return lv.subs[key];
+  var row = document.createElement("div");
+  row.className = "tool-line subagent running";
+  var head = document.createElement("div");
+  head.className = "tool-head";
+  var glyph = document.createElement("span");
+  glyph.className = "tool-glyph"; glyph.textContent = "\u21E2";     // ⇢
+  var label = document.createElement("span");
+  label.className = "tool-name"; label.textContent = _subLabel(ev);
+  var prev = document.createElement("span");
+  prev.className = "tool-prev";
+  prev.textContent = ev.goal ? String(ev.goal)
+                             : (ev.preview ? String(ev.preview) : "");
+  prev.title = prev.textContent;
+  var meta = document.createElement("span");
+  meta.className = "tool-meta";
+  if (ev.model) row.title = String(ev.model);
+  var chev = document.createElement("span");
+  chev.className = "tool-chev"; chev.textContent = "\u25BE";
+  head.appendChild(glyph); head.appendChild(label); head.appendChild(prev);
+  head.appendChild(meta); head.appendChild(chev);
+  row.appendChild(head);
+  // Children stay visible by default: seeing them is the point. Clicking the
+  // header collapses them, same affordance as a tool row.
+  var kids = document.createElement("div");
+  kids.className = "sub-kids";
+  row.appendChild(kids);
+  var rec = { row: row, name: label.textContent, glyph: glyph, prev: prev, meta: meta,
+              chev: chev, detail: kids, secs: null, t0: Date.now(), timer: null,
+              kids: kids, key: key, count: 0 };
+  head.addEventListener("click", function () { _toolToggle(rec); });
+  lv.tools.appendChild(row);
+  lv.subs[key] = rec;
+  if (!turn || turn.sid === sessionId) scrollDown();
+  return rec;
+}
+
+function addSubagentTool(turn, ev) {
+  var rec = addSubagentLine(turn, ev);   // also covers a missed subagent.start
+  if (!rec) return;
+  var line = document.createElement("div");
+  line.className = "sub-tool";
+  var g = document.createElement("span");
+  g.className = "sub-glyph"; g.textContent = "\u00b7";
+  var n = document.createElement("span");
+  n.className = "sub-name"; n.textContent = ev.tool || "tool";
+  var p = document.createElement("span");
+  p.className = "sub-prev"; p.textContent = ev.preview ? String(ev.preview) : "";
+  p.title = p.textContent;
+  line.appendChild(g); line.appendChild(n); line.appendChild(p);
+  rec.kids.appendChild(line);
+  rec.count += 1;
+  rec.meta.textContent = rec.count + " tool" + (rec.count === 1 ? "" : "s");
+  if (!turn || turn.sid === sessionId) scrollDown();
+}
+
+function subagentProgress(turn, ev) {
+  var rec = addSubagentLine(turn, ev);
+  if (!rec || !ev.preview) return;
+  var line = document.createElement("div");
+  line.className = "sub-prog";
+  line.textContent = String(ev.preview);
+  rec.kids.appendChild(line);
+  if (!turn || turn.sid === sessionId) scrollDown();
+}
+
+function completeSubagentLine(turn, ev) {
+  var rec = addSubagentLine(turn, ev);
+  if (!rec) return;
+  var ok = !ev.status || ev.status === "completed" || ev.status === "ok" || ev.status === "done";
+  rec.row.classList.remove("running");
+  rec.row.classList.add(ok ? "ok" : "err");
+  rec.glyph.textContent = ok ? "\u2713" : "\u2717";
+  var bits = [];
+  if (ev.duration_seconds != null && !isNaN(ev.duration_seconds)) {
+    bits.push(_toolDur(Math.round(Number(ev.duration_seconds) * 1000)));
+  }
+  if (ev.tool_count != null) bits.push(ev.tool_count + " tools");
+  else if (rec.count) bits.push(rec.count + " tools");
+  if (!ok && ev.status) bits.push(String(ev.status));
+  rec.meta.textContent = bits.join(" \u00b7 ");
+  if (ev.summary) {
+    var line = document.createElement("div");
+    line.className = "sub-prog";
+    line.textContent = String(ev.summary);
+    rec.kids.appendChild(line);
+  }
+  if (!turn || turn.sid === sessionId) scrollDown();
+}
+
 function startLive(turn) {
   var wrap = document.createElement("div");
   wrap.className = "msg assistant";
